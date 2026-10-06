@@ -1,0 +1,12 @@
+services:
+  sebasesh:
+    build:
+      context: .
+      target: runtime
+      additional_contexts:
+        # The hieropy checkout next to this project; installed into the image.
+        hieropy: ../hieropy
+    image: sebasesh:latest
+    ports:
+      - "8080:8000"
+    restart: unless-stopped

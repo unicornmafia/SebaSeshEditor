@@ -1,0 +1,460 @@
+/* Seba-Sesh: look and feel shared with the Seba-Seba Egyptian Dictionary
+   (Bootstrap 5, Font Awesome, steelblue navbar, #2255a4 / #a8cfe0 accents). */
+
+:root {
+  --seba-steel: steelblue;
+  --seba-blue: #2255a4;
+  --seba-blue-mid: #4a7ab5;
+  --seba-sky: #a8cfe0;
+  --seba-navy: #041240;
+  --seba-pale: #eef4f9;
+  --seba-active: #e3eef8;
+  --navbar-h: 56px;
+}
+
+/* NewGardiner is also registered as 'Hieroglyphic' by HieroJax (hierojax.css / hierojax.js). */
+@font-face {
+  font-family: 'Hieroglyphic';
+  src: url('/NewGardiner.otf') format('opentype');
+  font-display: swap;
+}
+/* Same font restricted to hieroglyphs, format controls and NewGardiner's private-use glyphs,
+   so it can be listed first in the input line without affecting Latin letters. */
+@font-face {
+  font-family: 'HieroInput';
+  src: url('/NewGardiner.otf') format('opentype');
+  unicode-range: U+13000-143FF, U+E000-E4FF;
+  font-display: swap;
+}
+/* New Athena Unicode Italic (Society for Classical Studies, SIL OFL) covers all Egyptological
+   transliteration characters, including the yod (U+A7BC/A7BD). The file is italic itself. */
+@font-face {
+  font-family: 'Transliteration';
+  src: url('/fonts/NewAthenaUnicode-Italic.ttf') format('truetype');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'SebaSerif';
+  src: url('/fonts/NotoSerif-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'SebaSerif';
+  src: url('/fonts/NotoSerif-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'SebaSerif';
+  src: url('/fonts/NotoSerif-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  padding-top: var(--navbar-h);
+  overflow: hidden;
+}
+
+.d-contents {
+  display: contents;
+}
+
+/* ------------------------------------------------------------ navbar */
+
+.seba-navbar {
+  background-color: var(--seba-steel);
+  min-height: var(--navbar-h);
+}
+
+.nav-home-btn {
+  font-family: Hieroglyphic;
+  font-size: 1.8em;
+  line-height: 1;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* ------------------------------------------------------------ shell */
+
+.app-shell {
+  height: calc(100vh - var(--navbar-h));
+  height: calc(100dvh - var(--navbar-h));
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 16px;
+  background: white;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.sidebar-toggle {
+  border: 1px solid var(--seba-steel);
+  color: var(--seba-steel);
+  background: white;
+  border-radius: 8px;
+}
+.sidebar-toggle:hover,
+.sidebar-toggle.open {
+  background: var(--seba-pale);
+  color: var(--seba-blue);
+}
+
+.selection-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.8rem;
+  color: white;
+  background: #b7791f;
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+}
+.selection-chip .btn-close {
+  width: 0.6em;
+  height: 0.6em;
+  padding: 0.25em;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.fontsize-group {
+  width: auto;
+}
+.fontsize-group .form-select {
+  width: 7em;
+  flex: 0 0 auto;
+}
+
+.editor-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.editor-center {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  background: var(--seba-pale);
+  padding: 16px;
+}
+
+/* ------------------------------------------------------------ dictionary-style buttons */
+
+.search_config {
+  font-size: smaller;
+  background-color: var(--seba-steel) !important;
+  color: white !important;
+  border-color: var(--seba-steel) !important;
+}
+@media (hover: hover) {
+  .search_config:hover {
+    background-color: var(--seba-sky) !important;
+    border-color: var(--seba-sky) !important;
+    color: white !important;
+  }
+}
+.btn-check:checked + .search_config {
+  background-color: var(--seba-blue) !important;
+  border-color: var(--seba-blue) !important;
+  color: white !important;
+}
+.btn-group > .d-contents:first-child > .btn {
+  border-top-left-radius: 10px;
+  border-bottom-left-radius: 10px;
+}
+.btn-group > .d-contents:last-child > .btn {
+  border-top-right-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+
+/* Text glyph used as a line-type icon (ṯ), in the transliteration font. */
+.mode-glyph {
+  font-family: Transliteration, SebaSerif, serif;
+  font-size: 1.875em;
+  line-height: 0; /* so the larger glyph doesn't make the button taller */
+  display: inline-block;
+  width: 0.7em;
+  text-align: center;
+  vertical-align: baseline; /* with line-height 0 this centres ṯ's ink (t + underline) in the button */
+}
+
+/* The ankh reads small next to the other line-type icons. */
+.fa-ankh {
+  font-size: 1.1em;
+}
+
+.search-submit {
+  background-color: var(--seba-blue) !important;
+  border-color: var(--seba-blue) !important;
+  color: white !important;
+}
+.search-submit:hover {
+  background-color: var(--seba-blue-mid) !important;
+  border-color: var(--seba-blue-mid) !important;
+}
+
+.label-short { display: none; }
+@media (max-width: 1099.98px) {
+  .label-full { display: none; }
+  .label-short { display: inline; }
+}
+
+/* ------------------------------------------------------------ sidebar */
+
+.control-sidebar {
+  flex: 0 0 auto;
+  width: 148px;
+  overflow-y: auto;
+  background: white;
+  border-right: 1px solid #dee2e6;
+  padding: 8px 6px 16px;
+}
+
+.control-group + .control-group {
+  margin-top: 10px;
+}
+
+.control-group-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6c757d;
+  margin: 0 2px 4px;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.control-btn {
+  height: 40px;
+  border: 1px solid #cfdcea;
+  border-radius: 6px;
+  background: var(--seba-pale);
+  color: var(--seba-navy);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.control-btn:hover:not(:disabled) {
+  background: var(--seba-sky);
+  border-color: var(--seba-steel);
+}
+.control-btn:active:not(:disabled) {
+  background: var(--seba-blue);
+  color: white;
+}
+.control-btn:disabled {
+  opacity: 0.35;
+}
+.control-glyph {
+  font-family: Hieroglyphic;
+  font-size: 26px;
+  line-height: 1;
+}
+.control-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+@media (max-width: 767.98px) {
+  .control-sidebar { width: 104px; }
+  .control-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ------------------------------------------------------------ display box */
+
+.display-box {
+  background: white;
+  border: 1px solid #d6e0ea;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(4, 18, 64, 0.06);
+  min-height: 100%;
+  padding: 12px 0;
+}
+
+.display-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 0;
+  border-left: 4px solid transparent;
+  cursor: text;
+}
+.display-line:hover {
+  background: #f7fafc;
+}
+.display-line.active {
+  background: var(--seba-active);
+  border-left-color: var(--seba-steel);
+}
+/* Lines in the selection (font size changes apply to them). */
+.display-line.selected {
+  background: #fff4d6;
+  box-shadow: inset 0 0 0 1px #f0c36d;
+}
+.display-line.selected .line-number {
+  color: #b7791f;
+  font-weight: 700;
+}
+.display-box ::selection {
+  background: rgba(240, 195, 109, 0.55);
+}
+
+.line-number {
+  flex: 0 0 3em;
+  text-align: right;
+  font-size: 0.75rem;
+  color: #9aa5b1;
+  user-select: none;
+}
+
+.line-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.display-line.rtl .line-content {
+  text-align: right;
+}
+
+.display-line.stale .line-content {
+  opacity: 0.45;
+}
+.display-line.stale .line-number {
+  color: #dc3545;
+  font-weight: 700;
+}
+
+.line-placeholder {
+  display: inline-block;
+}
+
+.hiero-host {
+  display: inline-block;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.text-line {
+  display: inline-block;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  color: #1d2733;
+}
+.text-translit {
+  font-family: Transliteration, SebaSerif, serif;
+}
+.text-latin, .text-bold, .text-italic {
+  font-family: SebaSerif, Georgia, serif;
+}
+.text-bold { font-weight: 700; }
+.text-italic { font-style: italic; }
+
+.line-actions {
+  flex: 0 0 auto;
+  display: flex;
+  visibility: hidden;
+}
+.display-line:hover .line-actions,
+.display-line.active .line-actions {
+  visibility: visible;
+}
+.line-actions .btn {
+  color: #6c8aa8;
+  padding: 2px 6px;
+}
+
+/* ------------------------------------------------------------ input bar */
+
+.input-bar {
+  flex: 0 0 auto;
+  background: white;
+  border-top: 1px solid #dee2e6;
+  padding: 10px 16px 8px;
+  box-shadow: 0 -2px 6px rgba(4, 18, 64, 0.05);
+}
+
+.mode-badge {
+  background: var(--seba-steel);
+  border-color: var(--seba-steel);
+  color: white;
+  min-width: 3em;
+  justify-content: center;
+}
+
+.input-line {
+  font-size: 1.35rem;
+  /* 16px+ keeps iOS Safari from zooming on focus */
+  font-family: HieroInput, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.input-line.input-latin, .input-line.input-bold, .input-line.input-italic {
+  font-family: SebaSerif, Georgia, serif;
+}
+.input-line.input-bold { font-weight: 700; }
+.input-line.input-italic { font-style: italic; }
+.input-line:focus {
+  border-color: var(--seba-steel);
+  box-shadow: 0 0 0 0.2rem rgba(70, 130, 180, 0.25);
+}
+
+.input-status {
+  display: flex;
+  align-items: center;
+  min-height: 1.6em;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.input-status > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------ notices & dialogs */
+
+.notices {
+  position: fixed;
+  top: calc(var(--navbar-h) + 64px);
+  right: 16px;
+  width: min(420px, calc(100vw - 32px));
+  z-index: 1080;
+}
+
+.modal-header-seba {
+  background: var(--seba-steel);
+  color: white;
+}
+
+.import-warnings {
+  max-height: 40vh;
+  overflow: auto;
+}
