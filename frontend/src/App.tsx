@@ -5,6 +5,7 @@ import ImportDialog from './components/ImportDialog';
 import InputBar from './components/InputBar';
 import Notices, { type Notice } from './components/Notices';
 import Sidebar from './components/Sidebar';
+import LoadingOverlay from './components/LoadingOverlay';
 import Toolbar from './components/Toolbar';
 import { useUndoHistory, type EditKind, type Snapshot } from './history';
 import {
@@ -71,6 +72,29 @@ const toStored = (lines: Line[], fontsize: number): StoredDocument => ({
 
 const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));
 
+/**
+ * Resolves once HieroJax has drawn every hieroglyphic line in the main window. HieroJax may
+ * draw asynchronously (it first waits for its font); it replaces an element's text with its
+ * drawing, so an element that still holds only text has not been drawn yet. Gives up after
+ * `timeoutMs` so a line HieroJax cannot draw never leaves the spinner up.
+ */
+function waitForHieroglyphs(root: () => HTMLElement | null, timeoutMs = 60_000): Promise<void> {
+  const started = performance.now();
+  const undrawn = () => [...(root()?.querySelectorAll<HTMLElement>('.hiero-host > .hierojax') ?? [])]
+    .some((el) => el.firstElementChild === null && el.textContent !== '');
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!undrawn() || performance.now() - started > timeoutMs) {
+        // One more frame so the drawn lines are painted before the spinner goes.
+        requestAnimationFrame(() => resolve());
+      } else {
+        setTimeout(check, 50);
+      }
+    };
+    check();
+  });
+}
+
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -89,6 +113,13 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(initial.lines.length - 1);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  /** Message of the loading spinner over the main window, or null when hidden. */
+  const [loading, setLoading] = useState<string | null>(() =>
+    // Shown from the first paint when a saved document has hieroglyphs to draw.
+    initial.lines.some((l) => l.mode === 'hiero' && l.source.trim()) ? 'Loading document…' : null);
+  // Set when batch results have been applied: the spinner is hidden only after the render that
+  // draws them with HieroJax (which blocks the page for large documents) has been committed.
+  const hideLoadingAfterRender = useRef(false);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [importing, setImporting] = useState<{ filename: string; result: api.ImportResult } | null>(null);
   // Lines selected in the main window; font size changes apply to these (or to everything when empty).
@@ -148,16 +179,49 @@ export default function App() {
   }, [applyResult]);
 
   /** Interprets many lines at once (after loading or importing a document). */
-  const renderMany = useCallback((targets: Line[]) => {
+  /**
+   * Interprets many lines at once (after loading or importing a document). With `message`,
+   * the loading spinner is shown until the lines have been drawn.
+   */
+  const renderMany = useCallback((targets: Line[], message?: string) => {
     const hiero = targets.filter((l) => l.mode === 'hiero' && l.source.trim());
-    if (hiero.length === 0) return;
+    if (hiero.length === 0) {
+      if (message) setLoading(null);
+      return;
+    }
+    if (message) setLoading(message);
     api.renderBatch(hiero.map((l) => l.source))
-      .then((results) => hiero.forEach((l, i) => applyResult(l.id, l.source, results[i])))
-      .catch(() => notify({ kind: 'danger', title: 'Could not reach the rendering server' }));
-  }, [applyResult, notify]);
+      .then((results) => {
+        const byId = new Map(hiero.map((l, i) => [l.id, { source: l.source, result: results[i] }]));
+        // One state update for all lines (one per line would re-render the document each time).
+        setLines((ls) => ls.map((l) => {
+          const r = byId.get(l.id);
+          return r && l.source === r.source && l.mode === 'hiero'
+            ? { ...l, result: r.result, rendered: r.result.ok ? r.result.unicode : l.rendered }
+            : l;
+        }));
+        if (message) hideLoadingAfterRender.current = true;
+      })
+      .catch(() => {
+        notify({ kind: 'danger', title: 'Could not reach the rendering server' });
+        if (message) setLoading(null);
+      });
+  }, [notify]);
 
   useEffect(() => {
-    renderMany(initial.lines);
+    if (!hideLoadingAfterRender.current) return;
+    hideLoadingAfterRender.current = false;
+    let cancelled = false;
+    waitForHieroglyphs(() => displayRef.current).then(() => {
+      if (!cancelled) setLoading(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lines]);
+
+  useEffect(() => {
+    renderMany(initial.lines, 'Loading document…');
   }, [initial, renderMany]);
 
   useEffect(() => {
@@ -450,6 +514,7 @@ export default function App() {
 
   const onImport = async (file: File) => {
     setBusy(true);
+    setLoading(`Opening ${file.name}…`);
     try {
       const result = await api.importFile(file);
       if (result.lines.length === 0) {
@@ -460,6 +525,7 @@ export default function App() {
     } catch (err) {
       notify({ kind: 'danger', title: `Could not open ${file.name}`, details: [(err as Error).message] });
     } finally {
+      setLoading(null); // the import dialog takes over; drawing the lines shows the spinner again
       setBusy(false);
     }
   };
@@ -480,7 +546,8 @@ export default function App() {
       setLines((ls) => [...ls, ...imported]);
       setActiveIndex(lines.length);
     }
-    renderMany(imported);
+    const count = imported.filter((l) => l.mode === 'hiero').length;
+    renderMany(imported, `Rendering ${count.toLocaleString()} hieroglyphic line${count === 1 ? '' : 's'}…`);
     notify({ kind: 'success', title: `Opened ${importing.filename} (${imported.length} lines)` });
     setImporting(null);
   };
@@ -539,18 +606,21 @@ export default function App() {
 
       <div className="editor-main">
         {sidebarOpen && <Sidebar disabled={active.mode !== 'hiero'} onInsert={insertAtCaret} />}
-        <main className="editor-center">
-          <DisplayBox
-            ref={displayRef}
-            lines={lines}
-            activeIndex={activeIndex}
-            selectedIds={selectedIds}
-            fontsize={fontsize}
-            onLineClick={onLineClick}
-            onMove={moveLine}
-            onDelete={deleteLine}
-          />
-        </main>
+        <div className="editor-center-wrap">
+          <main className="editor-center">
+            <DisplayBox
+              ref={displayRef}
+              lines={lines}
+              activeIndex={activeIndex}
+              selectedIds={selectedIds}
+              fontsize={fontsize}
+              onLineClick={onLineClick}
+              onMove={moveLine}
+              onDelete={deleteLine}
+            />
+          </main>
+          {loading && <LoadingOverlay message={loading} />}
+        </div>
       </div>
 
       <InputBar
