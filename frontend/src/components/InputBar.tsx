@@ -9,6 +9,8 @@ interface Props {
   onChange: (value: string) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   onCommit: () => void;
+  /** Called when text in the input is highlighted (a non-empty selection). */
+  onSelectText: () => void;
 }
 
 const FORMAT_LABELS: Record<string, string> = {
@@ -26,7 +28,7 @@ const PLACEHOLDERS: Record<Line['mode'], string> = {
 };
 
 const InputBar = forwardRef<HTMLInputElement, Props>(function InputBar(
-  { line, lineNumber, pending, onChange, onKeyDown, onCommit },
+  { line, lineNumber, pending, onChange, onKeyDown, onCommit, onSelectText },
   ref,
 ) {
   const mode = MODES.find((m) => m.mode === line.mode)!;
@@ -47,6 +49,10 @@ const InputBar = forwardRef<HTMLInputElement, Props>(function InputBar(
           placeholder={PLACEHOLDERS[line.mode]}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
+          onSelect={(e) => {
+            const el = e.currentTarget;
+            if (el.selectionStart !== el.selectionEnd) onSelectText();
+          }}
           autoCapitalize="none"
           autoCorrect="off"
           autoComplete="off"

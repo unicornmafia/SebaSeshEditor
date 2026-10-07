@@ -85,8 +85,9 @@ function waitForHieroglyphs(root: () => HTMLElement | null, timeoutMs = 60_000):
   return new Promise((resolve) => {
     const check = () => {
       if (!undrawn() || performance.now() - started > timeoutMs) {
-        // One more frame so the drawn lines are painted before the spinner goes.
-        requestAnimationFrame(() => resolve());
+        // A short delay (not requestAnimationFrame, which never fires in a background tab)
+        // so the drawn lines are painted before the spinner goes.
+        setTimeout(resolve, 16);
       } else {
         setTimeout(check, 50);
       }
@@ -117,9 +118,12 @@ export default function App() {
   const [loading, setLoading] = useState<string | null>(() =>
     // Shown from the first paint when a saved document has hieroglyphs to draw.
     initial.lines.some((l) => l.mode === 'hiero' && l.source.trim()) ? 'Loading document…' : null);
-  // Set when batch results have been applied: the spinner is hidden only after the render that
-  // draws them with HieroJax (which blocks the page for large documents) has been committed.
-  const hideLoadingAfterRender = useRef(false);
+  // Each time the spinner is shown it gets a new ticket; whatever finishes that load hides it
+  // only if no newer load has replaced it.
+  const loadingTicket = useRef(0);
+  // Ticket of a load whose batch results have been applied: the spinner is hidden once the
+  // render that draws them with HieroJax has been committed and every line is drawn.
+  const hideAfterRender = useRef<number | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [importing, setImporting] = useState<{ filename: string; result: api.ImportResult } | null>(null);
   // Lines selected in the main window; font size changes apply to these (or to everything when empty).
@@ -178,18 +182,28 @@ export default function App() {
       });
   }, [applyResult]);
 
-  /** Interprets many lines at once (after loading or importing a document). */
+  /** Shows the spinner; returns its ticket. */
+  const showLoading = useCallback((message: string) => {
+    setLoading(message);
+    return ++loadingTicket.current;
+  }, []);
+
+  /** Hides the spinner if it still belongs to `ticket`. */
+  const hideLoading = useCallback((ticket: number) => {
+    if (loadingTicket.current === ticket) setLoading(null);
+  }, []);
+
   /**
    * Interprets many lines at once (after loading or importing a document). With `message`,
    * the loading spinner is shown until the lines have been drawn.
    */
   const renderMany = useCallback((targets: Line[], message?: string) => {
+    const ticket = message ? showLoading(message) : null;
     const hiero = targets.filter((l) => l.mode === 'hiero' && l.source.trim());
     if (hiero.length === 0) {
-      if (message) setLoading(null);
+      if (ticket !== null) hideLoading(ticket);
       return;
     }
-    if (message) setLoading(message);
     api.renderBatch(hiero.map((l) => l.source))
       .then((results) => {
         const byId = new Map(hiero.map((l, i) => [l.id, { source: l.source, result: results[i] }]));
@@ -200,25 +214,22 @@ export default function App() {
             ? { ...l, result: r.result, rendered: r.result.ok ? r.result.unicode : l.rendered }
             : l;
         }));
-        if (message) hideLoadingAfterRender.current = true;
+        if (ticket !== null) hideAfterRender.current = ticket;
       })
       .catch(() => {
         notify({ kind: 'danger', title: 'Could not reach the rendering server' });
-        if (message) setLoading(null);
+        if (ticket !== null) hideLoading(ticket);
       });
-  }, [notify]);
+  }, [notify, showLoading, hideLoading]);
 
   useEffect(() => {
-    if (!hideLoadingAfterRender.current) return;
-    hideLoadingAfterRender.current = false;
-    let cancelled = false;
-    waitForHieroglyphs(() => displayRef.current).then(() => {
-      if (!cancelled) setLoading(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [lines]);
+    const ticket = hideAfterRender.current;
+    if (ticket === null) return;
+    hideAfterRender.current = null;
+    // Not cancelled when the lines change again (typing, a line's result arriving): the ticket
+    // decides whether this spinner is still the current one.
+    waitForHieroglyphs(() => displayRef.current).then(() => hideLoading(ticket));
+  }, [lines, hideLoading]);
 
   useEffect(() => {
     renderMany(initial.lines, 'Loading document…');
@@ -365,13 +376,17 @@ export default function App() {
       const next = makeDirection(orientation ?? orientationOf(current), flow ?? flowOf(current));
       return { ...l, direction: next === 'hlr' ? undefined : next };
     }));
-    focusInput();
+    focusInput('keep');
   };
 
+  // Where the mouse went down in the main window, to tell a click from a drag-selection.
+  const mouseDownAt = useRef<{ x: number; y: number } | null>(null);
+
   const onLineClick = (index: number, e: React.MouseEvent) => {
-    const sel = document.getSelection();
-    if (sel && !sel.isCollapsed && displayRef.current?.contains(sel.anchorNode)) {
-      return; // the user is selecting text, not choosing a line to edit
+    const down = mouseDownAt.current;
+    const dragged = down !== null && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4;
+    if (dragged || e.shiftKey || e.detail > 1) {
+      return; // selecting text (drag, shift-click, double/triple-click), not choosing a line to edit
     }
     const id = lines[index].id;
     if (e.metaKey || e.ctrlKey) {
@@ -393,10 +408,11 @@ export default function App() {
 
   // Caret to restore in the input line once React has committed the next render
   // (a controlled input moves its caret to the end when its value is replaced).
-  const pendingCaret = useRef<number | 'end' | null>(null);
+  const pendingCaret = useRef<number | 'end' | 'keep' | null>(null);
   const [caretTick, setCaretTick] = useState(0);
 
-  const focusInput = (caret?: number) => {
+  /** Focuses the input line, placing the caret at `caret`, at the end, or ('keep') where it was. */
+  const focusInput = (caret?: number | 'keep') => {
     pendingCaret.current = caret ?? 'end';
     setCaretTick((t) => t + 1);
   };
@@ -404,9 +420,11 @@ export default function App() {
   useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el || pendingCaret.current === null) return;
-    const pos = pendingCaret.current === 'end' ? el.value.length : pendingCaret.current;
+    const caret = pendingCaret.current;
     pendingCaret.current = null;
     el.focus();
+    if (caret === 'keep') return; // an input keeps its selection while blurred
+    const pos = caret === 'end' ? el.value.length : caret;
     el.setSelectionRange(pos, pos);
   }, [caretTick]);
 
@@ -514,7 +532,7 @@ export default function App() {
 
   const onImport = async (file: File) => {
     setBusy(true);
-    setLoading(`Opening ${file.name}…`);
+    const ticket = showLoading(`Opening ${file.name}…`);
     try {
       const result = await api.importFile(file);
       if (result.lines.length === 0) {
@@ -525,7 +543,7 @@ export default function App() {
     } catch (err) {
       notify({ kind: 'danger', title: `Could not open ${file.name}`, details: [(err as Error).message] });
     } finally {
-      setLoading(null); // the import dialog takes over; drawing the lines shows the spinner again
+      hideLoading(ticket); // the import dialog takes over; drawing the lines shows the spinner again
       setBusy(false);
     }
   };
@@ -594,7 +612,7 @@ export default function App() {
         onFlow={(f) => changeDirection(undefined, f)}
         busy={busy}
         onMode={setMode}
-        onFontsize={(s) => { changeFontsize(s); focusInput(); }}
+        onFontsize={(s) => { changeFontsize(s); focusInput('keep'); }}
         onClearSelection={() => { clearSelection(); focusInput(); }}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onUndo={undo}
@@ -607,7 +625,7 @@ export default function App() {
       <div className="editor-main">
         {sidebarOpen && <Sidebar disabled={active.mode !== 'hiero'} onInsert={insertAtCaret} />}
         <div className="editor-center-wrap">
-          <main className="editor-center">
+          <main className="editor-center" onMouseDown={(e) => { mouseDownAt.current = { x: e.clientX, y: e.clientY }; }}>
             <DisplayBox
               ref={displayRef}
               lines={lines}
@@ -630,6 +648,10 @@ export default function App() {
         pending={pending.has(active.id)}
         onChange={setSource}
         onKeyDown={onKeyDown}
+        // Highlighting text in the input line selects that line, so font size (and
+        // direction) changes apply to it rather than to the whole document.
+        onSelectText={() => setSelectedIds((prev) =>
+          prev.size === 1 && prev.has(active.id) ? prev : new Set([active.id]))}
         onCommit={() => newLineAfter(activeIndex)}
       />
 

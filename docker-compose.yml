@@ -3,9 +3,6 @@ services:
     build:
       context: .
       target: runtime
-      additional_contexts:
-        # The hieropy checkout next to this project; installed into the image.
-        hieropy: ../hieropy
     image: sebasesh:latest
     ports:
       - "8090:8000"

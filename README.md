@@ -5,22 +5,23 @@ A web editor for ancient Egyptian hieroglyphic text, transliteration and Latin t
 
 * **Frontend:** React + TypeScript (Vite) with Bootstrap 5 and Font Awesome. Hieroglyphs in the main window
   are drawn by [HieroJax](https://nederhof.github.io/hierojax/).
-* **Backend:** Python (FastAPI) using [hieropy](../hieropy) to interpret Manuel de Codage, RES and Unicode,
+* **Backend:** Python (FastAPI) using [hieropy](https://github.com/nederhof/hieropy) (installed from PyPI) to interpret Manuel de Codage, RES and Unicode,
   and to render the PDF and SVG exports.
 
 ## Running
 
 ```bash
-docker compose up --build        # then open http://localhost:8080
+docker compose up --build        # then open http://localhost:8090
 ```
 
-The image installs hieropy from the `../hieropy` checkout, passed as a named build context.
-Without compose, run:
+Without compose:
 
 ```bash
-docker build --build-context hieropy=../hieropy -t sebasesh .
-docker run -p 8080:8000 sebasesh
+docker build -t sebasesh .
+docker run -p 8090:8000 sebasesh
 ```
+
+hieropy is installed from PyPI (pinned in `backend/requirements.txt`).
 
 ## Using the editor
 
@@ -85,10 +86,10 @@ listed in a notice after export. Lines that can't be rendered are skipped and re
 
 ```bash
 # backend tests (Python 3.12 is required: hieropy's RES parser uses int.is_integer)
-docker build --build-context hieropy=../hieropy --target test -t sebasesh-test . && docker run --rm sebasesh-test
+docker build --target test -t sebasesh-test . && docker run --rm sebasesh-test
 
 # frontend dev server (proxies /api and /fonts to the backend; set BACKEND_URL to change the target)
-cd frontend && npm install && BACKEND_URL=http://localhost:8080 npm run dev
+cd frontend && npm install && BACKEND_URL=http://localhost:8090 npm run dev
 ```
 
 Layout:
