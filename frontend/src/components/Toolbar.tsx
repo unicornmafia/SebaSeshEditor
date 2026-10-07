@@ -6,6 +6,12 @@ const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
 export const FONT_SIZES = [16, 20, 24, 32, 40, 48, 56, 64, 80, 96, 128];
 
+/** The next size up (delta 1) or down (delta -1) from `size` in FONT_SIZES. */
+export function stepFontsize(size: number, delta: number): number {
+  if (delta > 0) return FONT_SIZES.find((s) => s > size) ?? FONT_SIZES[FONT_SIZES.length - 1];
+  return [...FONT_SIZES].reverse().find((s) => s < size) ?? FONT_SIZES[0];
+}
+
 const ORIENTATIONS: { value: Orientation; label: string; short: string; icon: string }[] = [
   { value: 'h', label: 'Horizontal', short: 'Hor', icon: 'fa-solid fa-arrows-left-right' },
   { value: 'v', label: 'Vertical', short: 'Vert', icon: 'fa-solid fa-arrows-up-down' },
@@ -20,7 +26,7 @@ const FLOWS: { value: Flow; label: string; title: string; icon: string }[] = [
 export interface DirectionState {
   orientation: Orientation | null;
   flow: Flow | null;
-  /** No hieroglyphic line to act on. */
+  /** No hieroglyphic line to act on (the buttons are then hidden). */
   disabled: boolean;
 }
 
@@ -37,7 +43,7 @@ interface Props {
   mode: Mode;
   /** Size shown in the control: of the selected lines, or the document; null when the selection is mixed. */
   fontsize: number | null;
-  /** Number of selected lines; 0 means font size changes apply to the whole document. */
+  /** Number of selected lines; 0 means font size and direction apply to the current line. */
   selectionCount: number;
   sidebarOpen: boolean;
   canUndo: boolean;
@@ -46,6 +52,8 @@ interface Props {
   busy: boolean;
   onMode: (mode: Mode) => void;
   onFontsize: (size: number) => void;
+  /** Steps the size of each target line up (+1) or down (-1) through FONT_SIZES. */
+  onFontsizeStep: (delta: number) => void;
   onClearSelection: () => void;
   onToggleSidebar: () => void;
   onUndo: () => void;
@@ -59,7 +67,7 @@ interface Props {
 
 export default function Toolbar({
   mode, fontsize, selectionCount, sidebarOpen, canUndo, canRedo, direction, busy,
-  onMode, onFontsize, onClearSelection, onToggleSidebar, onUndo, onRedo, onOrientation, onFlow,
+  onMode, onFontsize, onFontsizeStep, onClearSelection, onToggleSidebar, onUndo, onRedo, onOrientation, onFlow,
   onNew, onImport, onExport,
 }: Props) {
   const [exportOpen, setExportOpen] = useState(false);
@@ -81,13 +89,6 @@ export default function Toolbar({
       document.removeEventListener('keydown', onKey);
     };
   }, [exportOpen]);
-
-  const step = (delta: number) => {
-    const current = fontsize ?? FONT_SIZES[0];
-    const i = FONT_SIZES.findIndex((s) => s >= current);
-    const next = FONT_SIZES[Math.min(FONT_SIZES.length - 1, Math.max(0, (i < 0 ? FONT_SIZES.length - 1 : i) + delta))];
-    onFontsize(next);
-  };
 
   return (
     <div className="editor-toolbar">
@@ -136,8 +137,8 @@ export default function Toolbar({
       </div>
 
       <div className="input-group input-group-sm fontsize-group"
-        title={selectionCount ? `Font size of the ${selectionCount} selected line${selectionCount === 1 ? '' : 's'}` : 'Font size of the whole document'}>
-        <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => step(-1)} aria-label="Smaller">
+        title={selectionCount ? `Font size of the ${selectionCount} selected line${selectionCount === 1 ? '' : 's'}` : 'Font size of the current line'}>
+        <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => onFontsizeStep(-1)} aria-label="Smaller">
           <i className="fa-solid fa-minus" />
         </button>
         <span className="input-group-text"><i className="fa-solid fa-text-height" /></span>
@@ -146,49 +147,55 @@ export default function Toolbar({
           {fontsize !== null && !FONT_SIZES.includes(fontsize) && <option value={fontsize}>{fontsize}px</option>}
           {FONT_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
         </select>
-        <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => step(1)} aria-label="Larger">
+        <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => onFontsizeStep(1)} aria-label="Larger">
           <i className="fa-solid fa-plus" />
         </button>
       </div>
 
-      <div className="btn-group" role="group" aria-label="Orientation of hieroglyphic lines">
-        {ORIENTATIONS.map((o) => (
-          <span key={o.value} className="d-contents">
-            <input type="radio" className="btn-check" name="orientation" id={`orientation-${o.value}`}
-              checked={direction.orientation === o.value} disabled={direction.disabled}
-              onChange={() => onOrientation(o.value)} />
-            <label className="btn btn-outline-primary search_config" htmlFor={`orientation-${o.value}`}
-              title={`${o.label} hieroglyphic line${selectionCount ? 's (selected)' : ''}`}
-              onMouseDown={(e) => e.preventDefault()}>
-              <i className={`${o.icon} me-1`} />
-              <span className="label-full">{o.label}</span>
-              <span className="label-short">{o.short}</span>
-            </label>
-          </span>
-        ))}
-      </div>
+      {/* Orientation and direction only apply to hieroglyphic lines: shown when the current
+          line is one, or the selection includes some. */}
+      {!direction.disabled && (
+        <>
+          <div className="btn-group" role="group" aria-label="Orientation of hieroglyphic lines">
+            {ORIENTATIONS.map((o) => (
+              <span key={o.value} className="d-contents">
+                <input type="radio" className="btn-check" name="orientation" id={`orientation-${o.value}`}
+                  checked={direction.orientation === o.value}
+                  onChange={() => onOrientation(o.value)} />
+                <label className="btn btn-outline-primary search_config" htmlFor={`orientation-${o.value}`}
+                  title={`${o.label} hieroglyphic line${selectionCount ? 's (selected)' : ''}`}
+                  onMouseDown={(e) => e.preventDefault()}>
+                  <i className={`${o.icon} me-1`} />
+                  <span className="label-full">{o.label}</span>
+                  <span className="label-short">{o.short}</span>
+                </label>
+              </span>
+            ))}
+          </div>
 
-      <div className="btn-group" role="group" aria-label="Direction of hieroglyphic lines">
-        {FLOWS.map((f) => (
-          <span key={f.value} className="d-contents">
-            <input type="radio" className="btn-check" name="flow" id={`flow-${f.value}`}
-              checked={direction.flow === f.value} disabled={direction.disabled}
-              onChange={() => onFlow(f.value)} />
-            <label className="btn btn-outline-primary search_config" htmlFor={`flow-${f.value}`}
-              title={`${f.title}${selectionCount ? ' (selected hieroglyphic lines)' : ''}`}
-              onMouseDown={(e) => e.preventDefault()}>
-              <i className={`${f.icon} me-1`} />{f.label}
-            </label>
-          </span>
-        ))}
-      </div>
+          <div className="btn-group" role="group" aria-label="Direction of hieroglyphic lines">
+            {FLOWS.map((f) => (
+              <span key={f.value} className="d-contents">
+                <input type="radio" className="btn-check" name="flow" id={`flow-${f.value}`}
+                  checked={direction.flow === f.value}
+                  onChange={() => onFlow(f.value)} />
+                <label className="btn btn-outline-primary search_config" htmlFor={`flow-${f.value}`}
+                  title={`${f.title}${selectionCount ? ' (selected hieroglyphic lines)' : ''}`}
+                  onMouseDown={(e) => e.preventDefault()}>
+                  <i className={`${f.icon} me-1`} />{f.label}
+                </label>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
 
       {selectionCount > 0 && (
         <span className="selection-chip" role="status">
           <i className="fa-solid fa-i-cursor me-1" />
           {selectionCount} line{selectionCount === 1 ? '' : 's'} selected
           <button type="button" className="btn-close btn-close-white ms-2" aria-label="Clear selection"
-            title="Clear selection (Esc): font size applies to the whole document" onClick={onClearSelection} />
+            title="Clear selection (Esc): font size and direction then apply to the current line" onClick={onClearSelection} />
         </span>
       )}
 

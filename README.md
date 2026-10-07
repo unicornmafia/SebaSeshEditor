@@ -43,16 +43,19 @@ rendering, dimmed. As soon as the text is valid again, it renders.
 * **Toolbar:** show/hide the control-character panel, undo/redo, line type for the current line,
   orientation (Horizontal/Vertical) and direction (L→R/R→L) of hieroglyphic lines, font size, New, Open, Export.
 * **Writing direction:** each hieroglyphic line is horizontal left-to-right unless set otherwise. The
-  orientation and direction buttons act on the current line, or on all selected hieroglyphic lines.
+  orientation and direction buttons act on the current line, or on all selected hieroglyphic lines; they are
+  only shown when the current line is a hieroglyphic line or the selection includes one.
   Right-to-left lines are mirrored and set flush right; vertical lines are columns. A new line keeps the
   direction of the line it follows.
 * **Undo/redo:** ⌘Z / Ctrl+Z and ⇧⌘Z / Ctrl+Y, or the toolbar buttons. Up to 100 steps are kept
   (`DEFAULT_UNDO_LIMIT` in `frontend/src/history.ts`). Typing in one line counts as one step until you pause
   for a second; every other edit (control icons, line type, new/deleted/moved lines, font size, New, Open) is
   its own step. History lasts for the browser session.
-* **Font size:** with nothing selected it applies to the whole document. Select text in the main window
-  (drag, shift-click, Cmd/Ctrl-click a line, or Shift+↑/↓ in the input line) and it applies only to the
-  selected lines; Esc or the × on the "lines selected" chip clears the selection. Sizes carry into PDF/SVG export.
+* **Font size:** like the direction buttons, it applies to the selected lines, or to the current line
+  when nothing is selected. Select by dragging across text in the main window, shift-click, Cmd/Ctrl-click a
+  line, Shift+↑/↓ in the input line, or by highlighting text in the input line; Esc or the × on the
+  "lines selected" chip clears the selection. A new line takes the size of the line before it. Sizes carry
+  into PDF/SVG export.
 * **Keys:** Enter adds a new line, ↑/↓ move between lines, and Backspace on an empty line deletes it.
   You can also click any line to edit it.
 * The document is saved automatically in the browser (localStorage).

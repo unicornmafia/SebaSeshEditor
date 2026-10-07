@@ -6,7 +6,7 @@ import InputBar from './components/InputBar';
 import Notices, { type Notice } from './components/Notices';
 import Sidebar from './components/Sidebar';
 import LoadingOverlay from './components/LoadingOverlay';
-import Toolbar from './components/Toolbar';
+import Toolbar, { stepFontsize } from './components/Toolbar';
 import { useUndoHistory, type EditKind, type Snapshot } from './history';
 import {
   flowOf, makeDirection, orientationOf,
@@ -214,7 +214,9 @@ export default function App() {
             ? { ...l, result: r.result, rendered: r.result.ok ? r.result.unicode : l.rendered }
             : l;
         }));
-        if (ticket !== null) hideAfterRender.current = ticket;
+        // Only the current load may schedule hiding; a superseded load's results arriving
+        // later must not overwrite the current load's pending ticket.
+        if (ticket !== null && ticket === loadingTicket.current) hideAfterRender.current = ticket;
       })
       .catch(() => {
         notify({ kind: 'danger', title: 'Could not reach the rendering server' });
@@ -280,10 +282,12 @@ export default function App() {
 
   const selectedLines = lines.filter((l) => selectedIds.has(l.id));
 
-  /** Size shown in the toolbar: the selected lines' common size (null if mixed), else the document's. */
+  /** Lines the font size control acts on: the selected ones, else the current line (like direction). */
+  const fontsizeTargets = selectedLines.length > 0 ? selectedLines : [active];
+
+  /** Size shown in the toolbar: the target lines' common size, or null if they differ. */
   const shownFontsize = (() => {
-    if (selectedLines.length === 0) return fontsize;
-    const sizes = new Set(selectedLines.map((l) => l.fontsize ?? fontsize));
+    const sizes = new Set(fontsizeTargets.map((l) => l.fontsize ?? fontsize));
     return sizes.size === 1 ? [...sizes][0] : null;
   })();
 
@@ -340,15 +344,18 @@ export default function App() {
   }, []);
 
   const changeFontsize = (size: number) => {
-    if (size === shownFontsize && (selectedLines.length > 0 || !lines.some((l) => l.fontsize))) return;
+    if (size === shownFontsize) return;
+    const ids = new Set(fontsizeTargets.map((l) => l.id));
     recordEdit('fontsize');
-    if (selectedLines.length > 0) {
-      setLines((ls) => ls.map((l) => (selectedIds.has(l.id) ? { ...l, fontsize: size } : l)));
-    } else {
-      // Nothing selected: the whole document, including lines that had their own size.
-      setFontsize(size);
-      setLines((ls) => (ls.some((l) => l.fontsize) ? ls.map((l) => ({ ...l, fontsize: undefined })) : ls));
-    }
+    setLines((ls) => ls.map((l) => (ids.has(l.id) ? { ...l, fontsize: size } : l)));
+  };
+
+  /** +/−: each target line moves one size step from its own size (keeps differences between lines). */
+  const stepTargetsFontsize = (delta: number) => {
+    const next = new Map(fontsizeTargets.map((l) => [l.id, stepFontsize(l.fontsize ?? fontsize, delta)]));
+    if (fontsizeTargets.every((l) => next.get(l.id) === (l.fontsize ?? fontsize))) return; // at the limit
+    recordEdit('fontsize');
+    setLines((ls) => ls.map((l) => (next.has(l.id) ? { ...l, fontsize: next.get(l.id) } : l)));
   };
 
   // ------------------------------------------------------------ writing direction
@@ -613,6 +620,7 @@ export default function App() {
         busy={busy}
         onMode={setMode}
         onFontsize={(s) => { changeFontsize(s); focusInput('keep'); }}
+        onFontsizeStep={(d) => { stepTargetsFontsize(d); focusInput('keep'); }}
         onClearSelection={() => { clearSelection(); focusInput(); }}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onUndo={undo}
