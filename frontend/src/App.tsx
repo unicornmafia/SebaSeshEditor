@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as api from './api';
+import AboutDialog from './components/AboutDialog';
 import DisplayBox from './components/DisplayBox';
 import ImportDialog from './components/ImportDialog';
 import InputBar from './components/InputBar';
@@ -142,6 +143,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
   const [hieroFont, setHieroFont] = useState<HieroFont>(loadHieroFont);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
@@ -625,6 +627,15 @@ export default function App() {
             <span className="nav-home-btn" aria-hidden="true">{'\u{13080}'}</span>
             <span className="navbar-brand ms-2">Seba-Sesh Hieroglyphic Editor</span>
           </div>
+          <div className="navbar-links">
+            <a className="nav-link" href="https://sebaseba.marshbot.com" target="_blank" rel="noopener noreferrer"
+              title="Seba-Seba Egyptian Dictionary (opens in a new tab)">
+              <i className="fa-solid fa-book me-1" />Dictionary
+            </a>
+            <button type="button" className="nav-link" onClick={() => setAboutOpen(true)}>
+              <i className="fa-solid fa-circle-info me-1" />About
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -706,6 +717,8 @@ export default function App() {
       />
 
       <Notices notices={notices} onDismiss={(id) => setNotices((ns) => ns.filter((n) => n.id !== id))} />
+
+      {aboutOpen && <AboutDialog onClose={() => { setAboutOpen(false); focusInput('keep'); }} />}
 
       {importing && (
         <ImportDialog

@@ -98,6 +98,25 @@ body {
   min-height: var(--navbar-h);
 }
 
+.navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.navbar-links .nav-link {
+  color: rgba(255, 255, 255, 0.9);
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.navbar-links .nav-link:hover {
+  color: white;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
 .nav-home-btn {
   font-family: Hieroglyphic;
   font-size: 1.8em;
@@ -571,4 +590,38 @@ body {
 }
 .drawer-handle:hover {
   background: var(--seba-blue);
+}
+
+/* ------------------------------------------------------------ about dialog */
+
+.about-glyph {
+  font-family: Hieroglyphic;
+  font-size: 1.3em;
+  vertical-align: -0.1em;
+  margin-right: 4px;
+}
+.about-body p {
+  line-height: 1.55;
+}
+.about-heading {
+  margin-top: 1.25rem;
+  font-weight: 600;
+  color: var(--seba-navy);
+  border-bottom: 1px solid #dee2e6;
+  padding-bottom: 4px;
+}
+.about-sources {
+  list-style: none;
+  padding-left: 0;
+  margin-bottom: 0;
+}
+.about-sources li {
+  padding: 6px 0;
+}
+.about-sources li + li {
+  border-top: 1px dashed #e5ebf1;
+}
+.about-sources a {
+  font-weight: 600;
+  color: var(--seba-blue);
 }
