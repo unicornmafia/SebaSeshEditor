@@ -69,7 +69,11 @@ rendering, dimmed. As soon as the text is valid again, it renders.
   into PDF/SVG export.
 * **Keys:** Enter adds a new line, ↑/↓ move between lines, and Backspace on an empty line deletes it.
   You can also click any line to edit it.
-* The document is saved automatically in the browser (localStorage).
+* Documents are saved automatically in the browser (localStorage), one per tab: each tab edits its own
+  document and gets it back on reload. A new tab opens the most recently edited document that no other
+  tab has open (or an empty one); a duplicated tab continues on a copy. The 20 most recently edited
+  documents are kept. A document opens at its top (new tab, New, Open → Replace); reloading a tab
+  returns to the same scroll position and current line.
 
 In sign codes and mnemonics, `j` may be typed for `i` (`jnj` = `ini`, `jb` = `ib`); `.gly` export writes the
 `i` form. In mixed input, `:` `*` `(` `)` `\` `.` `..` `/` `//` keep their MdC meanings, and spaces or `-` separate

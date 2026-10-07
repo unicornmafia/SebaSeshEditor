@@ -9,13 +9,13 @@ import Sidebar from './components/Sidebar';
 import LoadingOverlay from './components/LoadingOverlay';
 import { asciiToUnicode } from './translit';
 import Toolbar, { stepFontsize } from './components/Toolbar';
+import { loadTabView, openTabDocument, saveTabDocument, saveTabView } from './storage';
 import { useUndoHistory, type EditKind, type Snapshot } from './history';
 import {
   flowOf, HIERO_FONTS, makeDirection, orientationOf,
   type Direction, type HieroFont, type ExportFormat, type Flow, type Line, type Mode, type Orientation, type RenderResult, type StoredDocument,
 } from './types';
 
-const STORAGE_KEY = 'sebasesh.document.v1';
 const SIDEBAR_KEY = 'sebasesh.sidebarOpen';
 const HIERO_FONT_KEY = 'sebasesh.hieroFont';
 const HIERO_OPTIONS_KEY = 'sebasesh.hieroOptionsOpen';
@@ -28,27 +28,15 @@ const makeLine = (mode: Mode = 'hiero', source = '', fontsize?: number, directio
   id: newId(), mode, source, fontsize, direction: direction === 'hlr' ? undefined : direction,
 });
 
-function loadStored(): StoredDocument | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const doc = JSON.parse(raw) as StoredDocument;
-    return Array.isArray(doc.lines) && doc.lines.length > 0 ? doc : null;
-  } catch {
-    return null;
-  }
-}
 
-function saveStored(doc: StoredDocument) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(doc));
-  } catch {
-    // Storage may be unavailable (private mode, quota); the document still works in memory.
-  }
-}
+
+// This tab's document (each browser tab edits its own; see storage.ts). Chosen once per page load.
+const tabDocument = openTabDocument();
+// Where the user was in it, if this tab is reloading (else the document opens at the top).
+const savedView = loadTabView(tabDocument.id);
 
 function initialState(): { lines: Line[]; fontsize: number } {
-  const stored = loadStored();
+  const stored = tabDocument.doc && tabDocument.doc.lines.length > 0 ? tabDocument.doc : null;
   if (!stored) return { lines: [makeLine()], fontsize: DEFAULT_FONTSIZE };
   return {
     lines: stored.lines.map((l) => makeLine(l.mode, l.source, l.fontsize, l.direction)),
@@ -124,9 +112,11 @@ function download(blob: Blob, filename: string) {
 
 export default function App() {
   const [initial] = useState(initialState);
+  const storageWarned = useRef(false);
   const [lines, setLines] = useState<Line[]>(initial.lines);
   const [fontsize, setFontsize] = useState(initial.fontsize);
-  const [activeIndex, setActiveIndex] = useState(initial.lines.length - 1);
+  const [activeIndex, setActiveIndex] = useState(() =>
+    savedView ? Math.min(Math.max(0, savedView.activeIndex), initial.lines.length - 1) : 0);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   /** Message of the loading spinner over the main window, or null when hidden. */
@@ -157,6 +147,7 @@ export default function App() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
+  const centerRef = useRef<HTMLElement>(null); // the scrolling main window
   const history = useUndoHistory();
   const controllers = useRef(new Map<string, AbortController>());
 
@@ -263,7 +254,11 @@ export default function App() {
   }, [initial, renderMany]);
 
   useEffect(() => {
-    saveStored(toStored(lines, fontsize));
+    if (!saveTabDocument(tabDocument.id, toStored(lines, fontsize)) && !storageWarned.current) {
+      storageWarned.current = true;
+      notify({ kind: 'warning', title: 'Could not save to browser storage', details: [
+        'The document is kept while this tab is open; export it to keep a copy.'] });
+    }
   }, [lines, fontsize]);
 
   useEffect(() => {
@@ -289,6 +284,54 @@ export default function App() {
       // not essential
     }
   }, [hieroOptionsOpen]);
+
+  // ------------------------------------------------------------ position in the document
+
+  // On a reload, return to the saved scroll position once the document has been drawn (line
+  // heights are only final then: when the loading spinner goes). Otherwise start at the top.
+  const initialScrollDone = useRef(false);
+  useEffect(() => {
+    if (initialScrollDone.current || loading) return;
+    initialScrollDone.current = true;
+    const target = savedView?.scrollTop ?? 0;
+    document.fonts.ready.then(() => {
+      if (centerRef.current) centerRef.current.scrollTop = target;
+    });
+  }, [loading]);
+
+  // Remember the position (per tab, for reloads): on scrolling and when the current line changes.
+  const activeIndexRef = useRef(activeIndex);
+  activeIndexRef.current = activeIndex;
+  const saveView = useCallback(() => {
+    if (!initialScrollDone.current || !centerRef.current) return; // don't overwrite before restoring
+    saveTabView(tabDocument.id, { scrollTop: centerRef.current.scrollTop, activeIndex: activeIndexRef.current });
+  }, []);
+  useEffect(() => {
+    saveView();
+  }, [activeIndex, saveView]);
+  useEffect(() => {
+    const el = centerRef.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      clearTimeout(timer);
+      timer = setTimeout(saveView, 150);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('pagehide', saveView);
+    return () => {
+      clearTimeout(timer);
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('pagehide', saveView);
+    };
+  }, [saveView]);
+
+  /** A newly loaded document (New, Open → Replace) starts at its top. */
+  const scrollToTop = () => {
+    requestAnimationFrame(() => {
+      if (centerRef.current) centerRef.current.scrollTop = 0;
+    });
+  };
 
   // ------------------------------------------------------------ selection
 
@@ -603,6 +646,7 @@ export default function App() {
     clearSelection();
     setLines([makeLine()]);
     setActiveIndex(0);
+    scrollToTop();
   };
 
   const onImport = async (file: File) => {
@@ -635,6 +679,7 @@ export default function App() {
       clearSelection();
       setLines(imported);
       setActiveIndex(0);
+      scrollToTop();
     } else {
       setLines((ls) => [...ls, ...imported]);
       setActiveIndex(lines.length);
@@ -735,7 +780,7 @@ export default function App() {
           </button>
         </div>
         <div className="editor-center-wrap">
-          <main className="editor-center" onMouseDown={(e) => { mouseDownAt.current = { x: e.clientX, y: e.clientY }; }}>
+          <main ref={centerRef} className="editor-center" onMouseDown={(e) => { mouseDownAt.current = { x: e.clientX, y: e.clientY }; }}>
             <DisplayBox
               ref={displayRef}
               lines={lines}
