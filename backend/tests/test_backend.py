@@ -279,3 +279,28 @@ def test_pdf_svg_directions(direction):
 def test_invalid_direction_rejected():
     r = client.post('/api/export', json={'format': 'pdf', 'document': {'lines': [{'source': 'A1', 'direction': 'up'}]}})
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------- brackets hieropy cannot print
+
+@pytest.mark.parametrize('mdc,expected', [
+    # JSesh: a bracket opening after a group belongs to the next group
+    ('D21_:X1_*[[-X1-Q3:D36-]]', 'D21:X1-[X1-(Q3:D36)]'),
+    ('A1*[[-B1-]]', 'A1-[B1]'),
+    ('[[-A1-]]*B1', '[A1]-B1'),
+    ('A1-[[-B1:C1-]]', 'A1-[(B1:C1)]'),  # already printable: unchanged
+])
+def test_misplaced_brackets_are_moved_and_printable(mdc, expected):
+    from hieropy import Options
+    interp = hiero.interpret(mdc)
+    assert interp.ok
+    assert repr(interp.fragment) == expected
+    interp.fragment.print(Options(imagetype='svg'))  # hieropy used to crash here
+    parser = UniParser()
+    assert parser.parse(interp.unicode) is not None and not parser.last_error
+
+
+def test_export_with_misplaced_brackets():
+    doc = {'lines': [{'mode': 'hiero', 'source': 'D21_:X1_*[[-X1-Q3:D36-]]'}]}
+    for fmt in ('pdf', 'svg'):
+        assert client.post('/api/export', json={'format': fmt, 'document': doc}).status_code == 200

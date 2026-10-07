@@ -25,6 +25,8 @@ from hieropy.uniconstants import (
 )
 from hieropy.unistructure import Fragment
 
+from .brackets import normalize_brackets
+
 HIEROPY_LOCK = threading.RLock()
 
 # Font size used for on-screen SVG; the client scales the SVG through its viewBox.
@@ -126,7 +128,8 @@ def _interpret_unicode(text: str) -> Interpretation:
     fragment = parser.parse(encoding)
     if parser.last_error or fragment is None:
         return Interpretation(None, source_format=source_format, error=parser.last_error or 'Cannot parse')
-    return Interpretation(fragment, unicode=str(fragment), source_format=source_format)
+    fragment, warnings = normalize_brackets(fragment)
+    return Interpretation(fragment, unicode=str(fragment), source_format=source_format, warnings=warnings)
 
 
 def _interpret_mdc(text: str) -> Interpretation:
@@ -138,14 +141,14 @@ def _interpret_mdc(text: str) -> Interpretation:
     if fatal:
         return Interpretation(None, source_format='mdc', error=_strip_line_prefix(fatal[0]))
     groups = [g for f in fragments for g in f.groups]
-    fragment = Fragment(groups)
+    fragment, bracket_warnings = normalize_brackets(Fragment(groups))
     encoding = str(fragment)
     if PLACEHOLDER in encoding:
         unknown = [tok for tok in re.findall(r'[A-Za-z]+[0-9]*[A-Za-z]*|[0-9]+', text)
                    if sign_to_char(tok) is None and not mdcnames.name_to_chars(tok)]
         detail = f' "{unknown[0]}"' if unknown else ''
         return Interpretation(None, source_format='mdc', error=f'Unknown sign code{detail}')
-    warnings = [_strip_line_prefix(e) for e in converter.errors]
+    warnings = [_strip_line_prefix(e) for e in converter.errors] + bracket_warnings
     return Interpretation(fragment, unicode=encoding, source_format='mdc', warnings=warnings)
 
 
