@@ -7,6 +7,7 @@ import InputBar from './components/InputBar';
 import Notices, { type Notice } from './components/Notices';
 import Sidebar from './components/Sidebar';
 import LoadingOverlay from './components/LoadingOverlay';
+import { asciiToUnicode } from './translit';
 import Toolbar, { stepFontsize } from './components/Toolbar';
 import { useUndoHistory, type EditKind, type Snapshot } from './history';
 import {
@@ -17,6 +18,7 @@ import {
 const STORAGE_KEY = 'sebasesh.document.v1';
 const SIDEBAR_KEY = 'sebasesh.sidebarOpen';
 const HIERO_FONT_KEY = 'sebasesh.hieroFont';
+const HIERO_OPTIONS_KEY = 'sebasesh.hieroOptionsOpen';
 const DEFAULT_FONTSIZE = 48;
 const EMPTY_RESULT: RenderResult = { ok: true, error: '', warnings: [], unicode: '', sourceFormat: 'empty' };
 
@@ -144,6 +146,14 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
   const [hieroFont, setHieroFont] = useState<HieroFont>(loadHieroFont);
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Glyph font and orientation/direction controls: collapsed unless the user opened them.
+  const [hieroOptionsOpen, setHieroOptionsOpen] = useState(() => {
+    try {
+      return localStorage.getItem(HIERO_OPTIONS_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   const inputRef = useRef<HTMLInputElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
@@ -272,6 +282,14 @@ export default function App() {
     }
   }, [hieroFont]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(HIERO_OPTIONS_KEY, String(hieroOptionsOpen));
+    } catch {
+      // not essential
+    }
+  }, [hieroOptionsOpen]);
+
   // ------------------------------------------------------------ selection
 
   /*
@@ -295,6 +313,33 @@ export default function App() {
     };
     document.addEventListener('selectionchange', onSelectionChange);
     return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, []);
+
+  // Copying from the main window: the drawn hieroglyphs carry no usable text, so the clipboard
+  // gets each selected line's own text instead, one line per line: the exact Unicode encoding
+  // for hieroglyphic lines, the displayed text for the others. A selection within a single text
+  // line is left to the browser, so part of a sentence can be copied.
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  useEffect(() => {
+    const box = displayRef.current;
+    if (!box) return;
+    const onCopy = (e: ClipboardEvent) => {
+      const sel = document.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !e.clipboardData) return;
+      const range = sel.getRangeAt(0);
+      const ids = new Set([...box.querySelectorAll<HTMLElement>('[data-line-id]')]
+        .filter((el) => range.intersectsNode(el)).map((el) => el.dataset.lineId!));
+      const selected = linesRef.current.filter((l) => ids.has(l.id));
+      if (selected.length === 0 || (selected.length === 1 && selected[0].mode !== 'hiero')) return;
+      const text = selected
+        .map((l) => (l.mode === 'hiero' ? l.rendered ?? '' : l.mode === 'translit' ? asciiToUnicode(l.source) : l.source))
+        .join('\n');
+      e.clipboardData.setData('text/plain', text);
+      e.preventDefault();
+    };
+    box.addEventListener('copy', onCopy);
+    return () => box.removeEventListener('copy', onCopy);
   }, []);
 
   const clearSelection = () => {
@@ -621,19 +666,22 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <nav className="navbar navbar-dark fixed-top seba-navbar">
+      <nav className="navbar navbar-dark seba-navbar">
         <div className="container-fluid">
           <div className="navbar-home d-flex align-items-center">
             <span className="nav-home-btn" aria-hidden="true">{'\u{13080}'}</span>
-            <span className="navbar-brand ms-2">Seba-Sesh Hieroglyphic Editor</span>
+            <span className="navbar-brand ms-2">
+              <span className="brand-full">Seba-Sesh Hieroglyphic Editor</span>
+              <span className="brand-short">Seba-Sesh</span>
+            </span>
           </div>
           <div className="navbar-links">
             <a className="nav-link" href="https://sebaseba.marshbot.com" target="_blank" rel="noopener noreferrer"
-              title="Seba-Seba Egyptian Dictionary (opens in a new tab)">
-              <i className="fa-solid fa-book me-1" />Dictionary
+              title="Seba-Seba Egyptian Dictionary (opens in a new tab)" aria-label="Dictionary">
+              <i className="fa-solid fa-book me-1" /><span className="nav-label">Dictionary</span>
             </a>
-            <button type="button" className="nav-link" onClick={() => setAboutOpen(true)}>
-              <i className="fa-solid fa-circle-info me-1" />About
+            <button type="button" className="nav-link" onClick={() => setAboutOpen(true)} title="About Seba-Sesh" aria-label="About">
+              <i className="fa-solid fa-circle-info me-1" /><span className="nav-label">About</span>
             </button>
           </div>
         </div>
@@ -647,6 +695,8 @@ export default function App() {
         canRedo={history.canRedo}
         direction={directionState}
         hieroFont={hieroFont}
+        hieroOptionsOpen={hieroOptionsOpen}
+        onToggleHieroOptions={() => setHieroOptionsOpen((o) => !o)}
         onHieroFont={(f) => {
           setHieroFont(f);
           const family = HIERO_FONTS.find((x) => x.value === f)?.family;

@@ -49,6 +49,8 @@ interface Props {
   canRedo: boolean;
   direction: DirectionState;
   hieroFont: HieroFont;
+  /** Whether the glyph font and orientation/direction controls are expanded. */
+  hieroOptionsOpen: boolean;
   busy: boolean;
   onMode: (mode: Mode) => void;
   onFontsize: (size: number) => void;
@@ -59,6 +61,7 @@ interface Props {
   onRedo: () => void;
   onOrientation: (o: Orientation) => void;
   onHieroFont: (font: HieroFont) => void;
+  onToggleHieroOptions: () => void;
   onFlow: (f: Flow) => void;
   onNew: () => void;
   onImport: (file: File) => void;
@@ -66,8 +69,8 @@ interface Props {
 }
 
 export default function Toolbar({
-  mode, fontsize, selectionCount, canUndo, canRedo, direction, hieroFont, busy,
-  onMode, onFontsize, onFontsizeStep, onClearSelection, onUndo, onRedo, onOrientation, onFlow, onHieroFont,
+  mode, fontsize, selectionCount, canUndo, canRedo, direction, hieroFont, hieroOptionsOpen, busy,
+  onMode, onFontsize, onFontsizeStep, onClearSelection, onUndo, onRedo, onOrientation, onFlow, onHieroFont, onToggleHieroOptions,
   onNew, onImport, onExport,
 }: Props) {
   const [exportOpen, setExportOpen] = useState(false);
@@ -113,9 +116,9 @@ export default function Toolbar({
         />
         <div className="dropdown" ref={exportRef}>
           <button type="button" className="btn btn-sm search-submit dropdown-toggle" disabled={busy}
-            aria-expanded={exportOpen} onClick={() => setExportOpen((o) => !o)}>
+            aria-expanded={exportOpen} onClick={() => setExportOpen((o) => !o)} title="Export" aria-label="Export">
             <i className={busy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-file-export'} />
-            <span className="ms-1">Export</span>
+            <span className="ms-1 label-text">Export</span>
           </button>
           {/* data-bs-popper activates Bootstrap's static positioning (normally set by its JS, which we don't load) */}
           <ul className={`dropdown-menu${exportOpen ? ' show' : ''}`} data-bs-popper="static">
@@ -162,25 +165,43 @@ export default function Toolbar({
         ))}
       </div>
 
-      <div className="input-group input-group-sm fontsize-group"
-        title={selectionCount ? `Font size of the ${selectionCount} selected line${selectionCount === 1 ? '' : 's'}` : 'Font size of the current line'}>
-        <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => onFontsizeStep(-1)} aria-label="Smaller">
-          <i className="fa-solid fa-minus" />
-        </button>
-        <span className="input-group-text"><i className="fa-solid fa-text-height" /></span>
-        <select className="form-select" value={fontsize ?? ''} onChange={(e) => onFontsize(Number(e.target.value))} aria-label="Font size">
-          {fontsize === null && <option value="" disabled>mixed</option>}
-          {fontsize !== null && !FONT_SIZES.includes(fontsize) && <option value={fontsize}>{fontsize}px</option>}
-          {FONT_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
-        </select>
-        <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => onFontsizeStep(1)} aria-label="Larger">
-          <i className="fa-solid fa-plus" />
-        </button>
-      </div>
-
-      {/* Glyph font, orientation and direction only concern hieroglyphic lines: shown when the
-          current line is one, or the selection includes some. */}
-      {!direction.disabled && (
+      {/* Layout toggle: font size (any line) plus, for hieroglyphic lines (the current line, or a
+          selection that includes some), glyph font, orientation and direction. */}
+      <button
+        type="button"
+        className={`btn btn-sm hiero-options-toggle${hieroOptionsOpen ? ' open' : ''}`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onToggleHieroOptions}
+        aria-expanded={hieroOptionsOpen}
+        aria-label="Size and layout"
+        title={hieroOptionsOpen ? 'Hide size and layout controls' : 'Show size and layout controls'}
+      >
+        <i className="fa-solid fa-sliders" />
+        <span className="ms-1 label-text">Layout</span>
+        <i className={`fa-solid ${hieroOptionsOpen ? 'fa-chevron-left' : 'fa-chevron-right'} ms-1 toggle-chevron`} />
+        {/* Marks a line set to something other than horizontal left-to-right while collapsed. */}
+        {!hieroOptionsOpen && !direction.disabled && (direction.orientation !== 'h' || direction.flow !== 'lr') && (
+          <span className="hiero-options-dot" aria-hidden="true" />
+        )}
+      </button>
+      {hieroOptionsOpen && (
+        <div className="input-group input-group-sm fontsize-group"
+          title={selectionCount ? `Font size of the ${selectionCount} selected line${selectionCount === 1 ? '' : 's'}` : 'Font size of the current line'}>
+          <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => onFontsizeStep(-1)} aria-label="Smaller">
+            <i className="fa-solid fa-minus" />
+          </button>
+          <span className="input-group-text"><i className="fa-solid fa-text-height" /></span>
+          <select className="form-select" value={fontsize ?? ''} onChange={(e) => onFontsize(Number(e.target.value))} aria-label="Font size">
+            {fontsize === null && <option value="" disabled>mixed</option>}
+            {fontsize !== null && !FONT_SIZES.includes(fontsize) && <option value={fontsize}>{fontsize}px</option>}
+            {FONT_SIZES.map((s) => <option key={s} value={s}>{s}px</option>)}
+          </select>
+          <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()} onClick={() => onFontsizeStep(1)} aria-label="Larger">
+            <i className="fa-solid fa-plus" />
+          </button>
+        </div>
+      )}
+      {!direction.disabled && hieroOptionsOpen && (
         <>
           <div className="input-group input-group-sm glyphfont-group"
             title="Hieroglyph font for the main window (PDF/SVG export always uses NewGardiner)">
@@ -217,7 +238,7 @@ export default function Toolbar({
                 <label className="btn btn-outline-primary search_config" htmlFor={`flow-${f.value}`}
                   title={`${f.title}${selectionCount ? ' (selected hieroglyphic lines)' : ''}`}
                   onMouseDown={(e) => e.preventDefault()}>
-                  <i className={`${f.icon} me-1`} />{f.label}
+                  <i className={`${f.icon} me-1`} /><span className="label-text">{f.label}</span>
                 </label>
               </span>
             ))}

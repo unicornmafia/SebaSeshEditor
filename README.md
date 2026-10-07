@@ -47,7 +47,10 @@ rendering, dimmed. As soon as the text is valid again, it renders.
   only shown when the current line is a hieroglyphic line or the selection includes one.
   Right-to-left lines are mirrored and set flush right; vertical lines are columns. A new line keeps the
   direction of the line it follows.
-* **Glyph font** (toolbar, 𓀀 menu; shown with the direction buttons, i.e. on hieroglyphic lines): how
+* **Layout toggle** (toolbar, sliders icon): shows or hides the font size control and, on hieroglyphic
+  lines, the glyph font menu and the orientation/direction buttons. It is remembered, starts collapsed,
+  and shows a dot while collapsed if the current hieroglyphic line is not horizontal left-to-right.
+* **Glyph font** (𓀀 menu, behind the layout toggle): how
   hieroglyphs are drawn in the main window. *NewGardiner
   (HieroJax)* is the default. The *Omni* entries are Nederhof's NewGardinerOmni builds (from
   `frontend/fonts/`), which lay out groups themselves through OpenType, with the browser doing the

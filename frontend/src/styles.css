@@ -83,7 +83,6 @@ html, body, #root {
 }
 
 body {
-  padding-top: var(--navbar-h);
   overflow: hidden;
 }
 
@@ -93,10 +92,24 @@ body {
 
 /* ------------------------------------------------------------ navbar */
 
+/* The navbar is part of the page's column layout (not fixed over it), so however tall it gets
+   it never covers the toolbar. */
 .seba-navbar {
+  flex: 0 0 auto;
   background-color: var(--seba-steel);
   min-height: var(--navbar-h);
 }
+.seba-navbar .container-fluid {
+  flex-wrap: nowrap;
+}
+.navbar-home {
+  min-width: 0;
+}
+.navbar-brand {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.brand-short { display: none; }
 
 .navbar-links {
   display: flex;
@@ -129,8 +142,8 @@ body {
 /* ------------------------------------------------------------ shell */
 
 .app-shell {
-  height: calc(100vh - var(--navbar-h));
-  height: calc(100dvh - var(--navbar-h));
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }
@@ -155,6 +168,32 @@ body {
 .sidebar-toggle.open {
   background: var(--seba-pale);
   color: var(--seba-blue);
+}
+
+.hiero-options-toggle {
+  position: relative;
+  border: 1px solid var(--seba-steel);
+  color: var(--seba-steel);
+  background: white;
+  border-radius: 8px;
+}
+.hiero-options-toggle:hover,
+.hiero-options-toggle.open {
+  background: var(--seba-pale);
+  color: var(--seba-blue);
+}
+.hiero-options-toggle .toggle-chevron {
+  font-size: 0.7em;
+}
+.hiero-options-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #b7791f;
+  border: 2px solid white;
 }
 
 .selection-chip {
@@ -514,6 +553,8 @@ body {
 .notices {
   position: fixed;
   top: calc(var(--navbar-h) + 64px);
+  max-height: calc(100dvh - var(--navbar-h) - 80px);
+  overflow-y: auto;
   right: 16px;
   width: min(420px, calc(100vw - 32px));
   z-index: 1080;
@@ -624,4 +665,31 @@ body {
 .about-sources a {
   font-weight: 600;
   color: var(--seba-blue);
+}
+
+/* ------------------------------------------------------------ narrow screens */
+
+/* Below 768px the toolbar and navbar buttons show icons only (each keeps a tooltip and an
+   accessible name): line types, orientation/direction, Export, Dictionary and About.
+   New and Open are already icon-only below 1200px. */
+@media (max-width: 767.98px) {
+  .search_config .label-full,
+  .search_config .label-short,
+  .label-text,
+  .navbar-links .nav-label { display: none; }
+  .search_config i,
+  .search_config .mode-glyph,
+  .navbar-links .nav-link i { margin-right: 0 !important; }
+  .navbar-links .nav-link i { font-size: 1.15rem; }
+  .search_config { padding-left: 0.6rem; padding-right: 0.6rem; }
+  .editor-toolbar { gap: 6px 8px; padding: 6px 8px; }
+  .glyphfont-group .form-select { width: 9.5em; }
+  .input-bar { padding: 8px; }
+}
+
+/* Phones: one-line navbar with the short title. */
+@media (max-width: 575.98px) {
+  .brand-full { display: none; }
+  .brand-short { display: inline; }
+  .navbar-brand { font-size: 1.1rem; }
 }

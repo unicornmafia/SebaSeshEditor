@@ -15,6 +15,9 @@ interface Props {
   onDelete: (index: number) => void;
 }
 
+/** Safari (WebKit without Chrome); its text shaping differs for the NewGardinerOmni fonts. */
+const IS_SAFARI = /^((?!chrome|chromium|crios|fxios|edg|android).)*safari/i.test(navigator.userAgent);
+
 /** Text is set smaller than hieroglyphs, as in printed editions (matches the PDF export). */
 export const TEXT_SCALE = 0.5;
 
@@ -81,8 +84,9 @@ function LineContent({ line, fontsize, hieroFont }: { line: Line; fontsize: numb
     }
     const direction = line.direction ?? 'hlr';
     const omniFamily = HIERO_FONTS.find((f) => f.value === hieroFont)?.family;
-    // The Omni fonts only do left-to-right; right-to-left lines stay with HieroJax.
-    if (omniFamily && direction.endsWith('lr')) {
+    // The Omni fonts only do left-to-right, so right-to-left lines stay with HieroJax; so do
+    // vertical lines in Safari, whose text engine garbles the Omni fonts' vertical layout.
+    if (omniFamily && direction.endsWith('lr') && !(IS_SAFARI && direction.startsWith('v'))) {
       return <OmniGlyphs unicode={line.rendered} fontsize={fontsize} family={omniFamily} direction={direction} />;
     }
     return <HieroGlyphs unicode={line.rendered} fontsize={fontsize} direction={direction} />;
