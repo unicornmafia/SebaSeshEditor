@@ -92,8 +92,8 @@ def _line_to_mdc(line: Line, warnings: list[str], index: int) -> str | None:
         warnings.append(f'Line {index}: skipped, cannot be rendered ({interp.error})')
         return None
     if interp.source_format == 'mdc':
-        # Keep the user's own MdC: it is what JSesh understands best.
-        return ' '.join(line.source.split())
+        # Keep the user's own MdC (with 'j' read as 'i'): it is what JSesh understands best.
+        return interp.mdc
     with hiero.HIEROPY_LOCK:
         mdc, conv_warnings = fragment_to_mdc(interp.fragment)
     warnings.extend(f'Line {index}: {w}' for w in conv_warnings)

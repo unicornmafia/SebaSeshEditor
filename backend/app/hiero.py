@@ -53,6 +53,8 @@ class Interpretation:
     source_format: str = 'empty'  # 'empty' | 'mdc' | 'unicode' | 'hybrid'
     error: str = ''
     warnings: list[str] = field(default_factory=list)
+    # For MdC input: the MdC with 'j' read as 'i' in sign names (what .gly export writes).
+    mdc: str = ''
 
     @property
     def ok(self) -> bool:
@@ -64,7 +66,14 @@ def contains_unicode_hieroglyphs(text: str) -> bool:
 
 
 def sign_to_char(token: str) -> str | None:
-    """Resolve a Gardiner code (A1, aa1, N35a) or mnemonic (nfr, ra) to a Unicode sign."""
+    """Resolve a Gardiner code (A1, aa1, N35a) or mnemonic (nfr, ra) to a Unicode sign.
+
+    'j' may be typed for 'i' in any sign name (jnj = ini, jb = ib); names as typed win.
+    """
+    return _sign_to_char_exact(token) or (_sign_to_char_exact(token.replace('j', 'i')) if 'j' in token else None)
+
+
+def _sign_to_char_exact(token: str) -> str | None:
     ch = uninames.name_to_char(uninames.name_to_name_insensitive(token))
     if ch:
         return ch
@@ -78,6 +87,21 @@ def sign_to_char(token: str) -> str | None:
     if chars and len(chars) == 1:
         return chars
     return None
+
+
+# A sign name in MdC: not preceded by a backslash (modifiers such as \R90) or another name character.
+_MDC_SIGN_NAME = re.compile(r'(?<![\\A-Za-z0-9])[A-Za-z]+[0-9]*[A-Za-z]*')
+
+
+def substitute_j(mdc: str) -> str:
+    """Rewrites sign names in MdC that are only known with 'i' for 'j' (jnj -> ini)."""
+    def replace(match: re.Match) -> str:
+        name = match.group(0)
+        if 'j' not in name or _sign_to_char_exact(name) or mdcnames.name_to_chars(name):
+            return name
+        alt = name.replace('j', 'i')
+        return alt if _sign_to_char_exact(alt) or mdcnames.name_to_chars(alt) else name
+    return _MDC_SIGN_NAME.sub(replace, mdc)
 
 
 def interpret(text: str) -> Interpretation:
@@ -135,6 +159,7 @@ def _interpret_unicode(text: str) -> Interpretation:
 def _interpret_mdc(text: str) -> Interpretation:
     converter = MdcUniConverter()
     # Line breaks inside one editor line carry no meaning; MdC line ends ('!') are dropped too.
+    text = substitute_j(text)
     fragments = converter.convert(text.replace('\n', ' '))
     fatal = [e for e in converter.errors if 'Cannot parse' in e or 'Syntax error' in e
              or 'Unexpected end' in e or 'Illegal character' in e]
@@ -149,7 +174,8 @@ def _interpret_mdc(text: str) -> Interpretation:
         detail = f' "{unknown[0]}"' if unknown else ''
         return Interpretation(None, source_format='mdc', error=f'Unknown sign code{detail}')
     warnings = [_strip_line_prefix(e) for e in converter.errors] + bracket_warnings
-    return Interpretation(fragment, unicode=encoding, source_format='mdc', warnings=warnings)
+    return Interpretation(fragment, unicode=encoding, source_format='mdc', warnings=warnings,
+                          mdc=' '.join(text.split()))
 
 
 def _strip_line_prefix(message: str) -> str:

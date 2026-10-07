@@ -1,13 +1,15 @@
 import { forwardRef, useEffect, useRef } from 'react';
 import { asciiToUnicode } from '../translit';
-import type { Line } from '../types';
+import { HIERO_FONTS, type HieroFont, type Line } from '../types';
 import HieroGlyphs from './HieroGlyphs';
+import OmniGlyphs from './OmniGlyphs';
 
 interface Props {
   lines: Line[];
   activeIndex: number;
   selectedIds: Set<string>;
   fontsize: number;
+  hieroFont: HieroFont;
   onLineClick: (index: number, e: React.MouseEvent) => void;
   onMove: (index: number, delta: number) => void;
   onDelete: (index: number) => void;
@@ -18,7 +20,7 @@ export const TEXT_SCALE = 0.5;
 
 /** The main window. Lines carry data-line-id so a text selection can be mapped back to lines. */
 const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
-  { lines, activeIndex, selectedIds, fontsize, onLineClick, onMove, onDelete },
+  { lines, activeIndex, selectedIds, fontsize, hieroFont, onLineClick, onMove, onDelete },
   ref,
 ) {
   const activeRef = useRef<HTMLDivElement>(null);
@@ -50,7 +52,7 @@ const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
           >
             <span className="line-number" title={stale ? `Cannot be rendered: ${line.result?.error}` : undefined}>{i + 1}</span>
             <div className="line-content">
-              <LineContent line={line} fontsize={line.fontsize ?? fontsize} />
+              <LineContent line={line} fontsize={line.fontsize ?? fontsize} hieroFont={hieroFont} />
             </div>
             <div className="line-actions" onClick={(e) => e.stopPropagation()}>
               <button type="button" className="btn btn-sm btn-link" title="Move up" disabled={i === 0} onClick={() => onMove(i, -1)}>
@@ -72,12 +74,18 @@ const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
 
 export default DisplayBox;
 
-function LineContent({ line, fontsize }: { line: Line; fontsize: number }) {
+function LineContent({ line, fontsize, hieroFont }: { line: Line; fontsize: number; hieroFont: HieroFont }) {
   if (line.mode === 'hiero') {
     if (!line.rendered) {
       return <span className="line-placeholder" style={{ height: fontsize }}>{line.source.trim() ? '' : ' '}</span>;
     }
-    return <HieroGlyphs unicode={line.rendered} fontsize={fontsize} direction={line.direction} />;
+    const direction = line.direction ?? 'hlr';
+    const omniFamily = HIERO_FONTS.find((f) => f.value === hieroFont)?.family;
+    // The Omni fonts only do left-to-right; right-to-left lines stay with HieroJax.
+    if (omniFamily && direction.endsWith('lr')) {
+      return <OmniGlyphs unicode={line.rendered} fontsize={fontsize} family={omniFamily} direction={direction} />;
+    }
+    return <HieroGlyphs unicode={line.rendered} fontsize={fontsize} direction={direction} />;
   }
   const text = line.mode === 'translit' ? asciiToUnicode(line.source) : line.source;
   return (

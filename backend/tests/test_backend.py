@@ -218,9 +218,9 @@ def test_api_import():
 
 
 def test_fonts_served():
-    assert client.get('/fonts/NewGardiner.ttf').status_code == 200
-    assert client.get('/fonts/NewAthenaUnicode-Italic.ttf').status_code == 200
-    assert client.get('/fonts/../app/main.py').status_code == 404
+    assert client.get('/api/fonts/NewGardiner.ttf').status_code == 200
+    assert client.get('/api/fonts/NewAthenaUnicode-Italic.ttf').status_code == 200
+    assert client.get('/api/fonts/../app/main.py').status_code == 404
 
 
 def test_per_line_fontsize_in_exports():
@@ -304,3 +304,22 @@ def test_export_with_misplaced_brackets():
     doc = {'lines': [{'mode': 'hiero', 'source': 'D21_:X1_*[[-X1-Q3:D36-]]'}]}
     for fmt in ('pdf', 'svg'):
         assert client.post('/api/export', json={'format': fmt, 'document': doc}).status_code == 200
+
+
+# ---------------------------------------------------------------- j for i in sign names
+
+@pytest.mark.parametrize('with_j,with_i', [
+    ('jnj', 'ini'), ('j-w-r:a', 'i-w-r:a'), ('jb-Hwj', 'ib-Hwi'), ('jj', 'ii'), ('A1\\R90-jnj', 'A1\\R90-ini'),
+])
+def test_j_means_i_in_mdc(with_j, with_i):
+    a, b = hiero.interpret(with_j), hiero.interpret(with_i)
+    assert a.ok and b.ok and a.unicode == b.unicode
+
+
+def test_j_means_i_in_hybrid_input():
+    assert hiero.interpret('jnj' + HOR + 'A1').unicode == hiero.interpret('ini' + HOR + 'A1').unicode
+
+
+def test_gly_export_writes_i_for_j():
+    text, _ = export_mdc(Document(lines=[Line(source='jnj-j-w')]), jsesh_header=False)
+    assert text == 'ini-i-w-!\n'

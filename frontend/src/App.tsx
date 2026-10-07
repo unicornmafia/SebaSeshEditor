@@ -9,12 +9,13 @@ import LoadingOverlay from './components/LoadingOverlay';
 import Toolbar, { stepFontsize } from './components/Toolbar';
 import { useUndoHistory, type EditKind, type Snapshot } from './history';
 import {
-  flowOf, makeDirection, orientationOf,
-  type Direction, type ExportFormat, type Flow, type Line, type Mode, type Orientation, type RenderResult, type StoredDocument,
+  flowOf, HIERO_FONTS, makeDirection, orientationOf,
+  type Direction, type HieroFont, type ExportFormat, type Flow, type Line, type Mode, type Orientation, type RenderResult, type StoredDocument,
 } from './types';
 
 const STORAGE_KEY = 'sebasesh.document.v1';
 const SIDEBAR_KEY = 'sebasesh.sidebarOpen';
+const HIERO_FONT_KEY = 'sebasesh.hieroFont';
 const DEFAULT_FONTSIZE = 48;
 const EMPTY_RESULT: RenderResult = { ok: true, error: '', warnings: [], unicode: '', sourceFormat: 'empty' };
 
@@ -52,6 +53,15 @@ function initialState(): { lines: Line[]; fontsize: number } {
   };
 }
 
+function loadHieroFont(): HieroFont {
+  try {
+    const value = localStorage.getItem(HIERO_FONT_KEY);
+    return HIERO_FONTS.some((f) => f.value === value) ? (value as HieroFont) : 'newgardiner';
+  } catch {
+    return 'newgardiner';
+  }
+}
+
 function loadSidebarOpen(): boolean {
   try {
     return localStorage.getItem(SIDEBAR_KEY) !== 'false';
@@ -78,7 +88,9 @@ const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].
  * drawing, so an element that still holds only text has not been drawn yet. Gives up after
  * `timeoutMs` so a line HieroJax cannot draw never leaves the spinner up.
  */
-function waitForHieroglyphs(root: () => HTMLElement | null, timeoutMs = 60_000): Promise<void> {
+async function waitForHieroglyphs(root: () => HTMLElement | null, timeoutMs = 60_000): Promise<void> {
+  // Fonts still downloading (e.g. a newly chosen Omni font) must arrive first.
+  await document.fonts.ready;
   const started = performance.now();
   const undrawn = () => [...(root()?.querySelectorAll<HTMLElement>('.hiero-host > .hierojax') ?? [])]
     .some((el) => el.firstElementChild === null && el.textContent !== '');
@@ -129,6 +141,7 @@ export default function App() {
   // Lines selected in the main window; font size changes apply to these (or to everything when empty).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
+  const [hieroFont, setHieroFont] = useState<HieroFont>(loadHieroFont);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
@@ -248,6 +261,14 @@ export default function App() {
       // not essential
     }
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HIERO_FONT_KEY, hieroFont);
+    } catch {
+      // not essential
+    }
+  }, [hieroFont]);
 
   // ------------------------------------------------------------ selection
 
@@ -611,10 +632,22 @@ export default function App() {
         mode={active.mode}
         fontsize={shownFontsize}
         selectionCount={selectedLines.length}
-        sidebarOpen={sidebarOpen}
         canUndo={history.canUndo}
         canRedo={history.canRedo}
         direction={directionState}
+        hieroFont={hieroFont}
+        onHieroFont={(f) => {
+          setHieroFont(f);
+          const family = HIERO_FONTS.find((x) => x.value === f)?.family;
+          if (family) {
+            // An Omni font is a 5-6 MB download: show the spinner until it has arrived.
+            const ticket = showLoading('Loading font…');
+            document.fonts.load(`32px '${family}'`, '\u{13000}')
+              .catch(() => notify({ kind: 'danger', title: `Could not load ${family}` }))
+              .finally(() => hideLoading(ticket));
+          }
+          focusInput('keep');
+        }}
         onOrientation={(o) => changeDirection(o, undefined)}
         onFlow={(f) => changeDirection(undefined, f)}
         busy={busy}
@@ -622,7 +655,6 @@ export default function App() {
         onFontsize={(s) => { changeFontsize(s); focusInput('keep'); }}
         onFontsizeStep={(d) => { stepTargetsFontsize(d); focusInput('keep'); }}
         onClearSelection={() => { clearSelection(); focusInput(); }}
-        onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onUndo={undo}
         onRedo={redo}
         onNew={onNew}
@@ -631,7 +663,16 @@ export default function App() {
       />
 
       <div className="editor-main">
-        {sidebarOpen && <Sidebar disabled={active.mode !== 'hiero'} onInsert={insertAtCaret} />}
+        <div className="drawer">
+          {sidebarOpen && <Sidebar disabled={active.mode !== 'hiero'} onInsert={insertAtCaret} />}
+          {/* Tab on the drawer's edge that opens/closes the control-character panel. */}
+          <button type="button" className="drawer-handle" onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setSidebarOpen((o) => !o)} aria-expanded={sidebarOpen}
+            title={sidebarOpen ? 'Hide control characters panel' : 'Show control characters panel'}
+            aria-label={sidebarOpen ? 'Hide control characters panel' : 'Show control characters panel'}>
+            <i className={`fa-solid ${sidebarOpen ? 'fa-angles-left' : 'fa-angles-right'}`} />
+          </button>
+        </div>
         <div className="editor-center-wrap">
           <main className="editor-center" onMouseDown={(e) => { mouseDownAt.current = { x: e.clientX, y: e.clientY }; }}>
             <DisplayBox
@@ -640,6 +681,7 @@ export default function App() {
               activeIndex={activeIndex}
               selectedIds={selectedIds}
               fontsize={fontsize}
+              hieroFont={hieroFont}
               onLineClick={onLineClick}
               onMove={moveLine}
               onDelete={deleteLine}

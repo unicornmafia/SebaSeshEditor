@@ -128,7 +128,7 @@ async def import_file(file: UploadFile = File(...), format: str | None = Form(de
 FONT_FILES = {p.name: p for p in render.FONT_DIR.glob('*.ttf')}
 
 
-@app.get('/fonts/{name}')
+@app.get('/api/fonts/{name}')
 def font(name: str):
     if name == 'NewGardiner.ttf':
         path = render.hiero_font_path()

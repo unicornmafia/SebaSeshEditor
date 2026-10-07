@@ -47,6 +47,14 @@ rendering, dimmed. As soon as the text is valid again, it renders.
   only shown when the current line is a hieroglyphic line or the selection includes one.
   Right-to-left lines are mirrored and set flush right; vertical lines are columns. A new line keeps the
   direction of the line it follows.
+* **Glyph font** (toolbar, 𓀀 menu; shown with the direction buttons, i.e. on hieroglyphic lines): how
+  hieroglyphs are drawn in the main window. *NewGardiner
+  (HieroJax)* is the default. The *Omni* entries are Nederhof's NewGardinerOmni builds (from
+  `frontend/fonts/`), which lay out groups themselves through OpenType, with the browser doing the
+  shaping; each is a 5-6 MB download, fetched only when chosen. Omni 2d3/2d4 render well in Chrome; the
+  3-digit builds (Omni 3/4) are too complex for browsers' shapers and are marked unreliable. The Omni
+  fonts only do left-to-right, so right-to-left lines stay with HieroJax. PDF/SVG export always uses
+  hieropy with NewGardiner.
 * **Undo/redo:** ⌘Z / Ctrl+Z and ⇧⌘Z / Ctrl+Y, or the toolbar buttons. Up to 100 steps are kept
   (`DEFAULT_UNDO_LIMIT` in `frontend/src/history.ts`). Typing in one line counts as one step until you pause
   for a second; every other edit (control icons, line type, new/deleted/moved lines, font size, New, Open) is
@@ -60,7 +68,8 @@ rendering, dimmed. As soon as the text is valid again, it renders.
   You can also click any line to edit it.
 * The document is saved automatically in the browser (localStorage).
 
-In mixed input, `:` `*` `(` `)` `\` `.` `..` `/` `//` keep their MdC meanings, and spaces or `-` separate
+In sign codes and mnemonics, `j` may be typed for `i` (`jnj` = `ini`, `jb` = `ib`); `.gly` export writes the
+`i` form. In mixed input, `:` `*` `(` `)` `\` `.` `..` `/` `//` keep their MdC meanings, and spaces or `-` separate
 groups. As in MdC, signs must be separated: `B1-nfr`, not `B1nfr`.
 
 ### Open (import)

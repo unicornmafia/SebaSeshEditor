@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MODES, type ExportFormat, type Flow, type Mode, type Orientation } from '../types';
+import { HIERO_FONTS, MODES, type ExportFormat, type Flow, type HieroFont, type Mode, type Orientation } from '../types';
 import ModeIcon from './ModeIcon';
 
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
@@ -45,20 +45,20 @@ interface Props {
   fontsize: number | null;
   /** Number of selected lines; 0 means font size and direction apply to the current line. */
   selectionCount: number;
-  sidebarOpen: boolean;
   canUndo: boolean;
   canRedo: boolean;
   direction: DirectionState;
+  hieroFont: HieroFont;
   busy: boolean;
   onMode: (mode: Mode) => void;
   onFontsize: (size: number) => void;
   /** Steps the size of each target line up (+1) or down (-1) through FONT_SIZES. */
   onFontsizeStep: (delta: number) => void;
   onClearSelection: () => void;
-  onToggleSidebar: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onOrientation: (o: Orientation) => void;
+  onHieroFont: (font: HieroFont) => void;
   onFlow: (f: Flow) => void;
   onNew: () => void;
   onImport: (file: File) => void;
@@ -66,8 +66,8 @@ interface Props {
 }
 
 export default function Toolbar({
-  mode, fontsize, selectionCount, sidebarOpen, canUndo, canRedo, direction, busy,
-  onMode, onFontsize, onFontsizeStep, onClearSelection, onToggleSidebar, onUndo, onRedo, onOrientation, onFlow,
+  mode, fontsize, selectionCount, canUndo, canRedo, direction, hieroFont, busy,
+  onMode, onFontsize, onFontsizeStep, onClearSelection, onUndo, onRedo, onOrientation, onFlow, onHieroFont,
   onNew, onImport, onExport,
 }: Props) {
   const [exportOpen, setExportOpen] = useState(false);
@@ -92,17 +92,43 @@ export default function Toolbar({
 
   return (
     <div className="editor-toolbar">
-      <button
-        type="button"
-        className={`btn btn-sm sidebar-toggle${sidebarOpen ? ' open' : ''}`}
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={onToggleSidebar}
-        title={sidebarOpen ? 'Hide control characters panel' : 'Show control characters panel'}
-        aria-label={sidebarOpen ? 'Hide control characters panel' : 'Show control characters panel'}
-        aria-expanded={sidebarOpen}
-      >
-        <i className={`fa-solid ${sidebarOpen ? 'fa-angles-left' : 'fa-angles-right'}`} />
-      </button>
+      <div className="toolbar-actions">
+        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={onNew} title="New document">
+          <i className="fa-solid fa-file" /><span className="ms-1 d-none d-xl-inline">New</span>
+        </button>
+        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => fileRef.current?.click()}
+          title="Open a JSesh .gly, MdC, RES or Unicode text file" disabled={busy}>
+          <i className="fa-solid fa-folder-open" /><span className="ms-1 d-none d-xl-inline">Open</span>
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          className="d-none"
+          accept=".gly,.mdc,.res,.txt,.uni,text/plain"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) onImport(file);
+          }}
+        />
+        <div className="dropdown" ref={exportRef}>
+          <button type="button" className="btn btn-sm search-submit dropdown-toggle" disabled={busy}
+            aria-expanded={exportOpen} onClick={() => setExportOpen((o) => !o)}>
+            <i className={busy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-file-export'} />
+            <span className="ms-1">Export</span>
+          </button>
+          {/* data-bs-popper activates Bootstrap's static positioning (normally set by its JS, which we don't load) */}
+          <ul className={`dropdown-menu${exportOpen ? ' show' : ''}`} data-bs-popper="static">
+            {EXPORTS.map((e) => (
+              <li key={e.format}>
+                <button type="button" className="dropdown-item" onClick={() => { setExportOpen(false); onExport(e.format); }}>
+                  <i className={`${e.icon} me-2 text-secondary`} />{e.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
 
       <div className="btn-group btn-group-sm" role="group" aria-label="Undo and redo">
         <button type="button" className="btn btn-outline-secondary" onMouseDown={(e) => e.preventDefault()}
@@ -152,10 +178,19 @@ export default function Toolbar({
         </button>
       </div>
 
-      {/* Orientation and direction only apply to hieroglyphic lines: shown when the current
-          line is one, or the selection includes some. */}
+      {/* Glyph font, orientation and direction only concern hieroglyphic lines: shown when the
+          current line is one, or the selection includes some. */}
       {!direction.disabled && (
         <>
+          <div className="input-group input-group-sm glyphfont-group"
+            title="Hieroglyph font for the main window (PDF/SVG export always uses NewGardiner)">
+            <span className="input-group-text glyphfont-icon" aria-hidden="true">{'\u{13000}'}</span>
+            <select className="form-select" value={hieroFont} aria-label="Hieroglyph font"
+              onChange={(e) => onHieroFont(e.target.value as HieroFont)}>
+              {HIERO_FONTS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+          </div>
+
           <div className="btn-group" role="group" aria-label="Orientation of hieroglyphic lines">
             {ORIENTATIONS.map((o) => (
               <span key={o.value} className="d-contents">
@@ -199,43 +234,6 @@ export default function Toolbar({
         </span>
       )}
 
-      <div className="toolbar-actions">
-        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={onNew} title="New document">
-          <i className="fa-solid fa-file" /><span className="ms-1 d-none d-xl-inline">New</span>
-        </button>
-        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => fileRef.current?.click()}
-          title="Open a JSesh .gly, MdC, RES or Unicode text file" disabled={busy}>
-          <i className="fa-solid fa-folder-open" /><span className="ms-1 d-none d-xl-inline">Open</span>
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          className="d-none"
-          accept=".gly,.mdc,.res,.txt,.uni,text/plain"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            if (file) onImport(file);
-          }}
-        />
-        <div className="dropdown" ref={exportRef}>
-          <button type="button" className="btn btn-sm search-submit dropdown-toggle" disabled={busy}
-            aria-expanded={exportOpen} onClick={() => setExportOpen((o) => !o)}>
-            <i className={busy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-file-export'} />
-            <span className="ms-1">Export</span>
-          </button>
-          {/* data-bs-popper activates Bootstrap's right alignment (normally set by its JS, which we don't load) */}
-          <ul className={`dropdown-menu dropdown-menu-end${exportOpen ? ' show' : ''}`} data-bs-popper="static">
-            {EXPORTS.map((e) => (
-              <li key={e.format}>
-                <button type="button" className="dropdown-item" onClick={() => { setExportOpen(false); onExport(e.format); }}>
-                  <i className={`${e.icon} me-2 text-secondary`} />{e.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
     </div>
   );
 }

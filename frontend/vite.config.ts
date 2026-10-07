@@ -8,7 +8,6 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': backend,
-      '/fonts': backend,
     },
   },
 });

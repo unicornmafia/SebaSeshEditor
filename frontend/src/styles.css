@@ -28,28 +28,51 @@
 }
 /* New Athena Unicode Italic (Society for Classical Studies, SIL OFL) covers all Egyptological
    transliteration characters, including the yod (U+A7BC/A7BD). The file is italic itself. */
+/* NewGardinerOmni builds (Nederhof): the font itself lays out quadrats from the Unicode format
+   controls through OpenType liga/mark (and vert for columns). Each file is 5-6 MB; the browser
+   only downloads the one actually used. */
+@font-face {
+  font-family: 'SebaOmni2d3';
+  src: url('../fonts/NewGardinerOmni2d3.ttf') format('truetype');
+  font-display: block;
+}
+@font-face {
+  font-family: 'SebaOmni2d4';
+  src: url('../fonts/NewGardinerOmni2d4.ttf') format('truetype');
+  font-display: block;
+}
+@font-face {
+  font-family: 'SebaOmni3';
+  src: url('../fonts/NewGardinerOmni3.ttf') format('truetype');
+  font-display: block;
+}
+@font-face {
+  font-family: 'SebaOmni4';
+  src: url('../fonts/NewGardinerOmni4.ttf') format('truetype');
+  font-display: block;
+}
 @font-face {
   font-family: 'Transliteration';
-  src: url('/fonts/NewAthenaUnicode-Italic.ttf') format('truetype');
+  src: url('/api/fonts/NewAthenaUnicode-Italic.ttf') format('truetype');
   font-display: swap;
 }
 @font-face {
   font-family: 'SebaSerif';
-  src: url('/fonts/NotoSerif-Regular.ttf') format('truetype');
+  src: url('/api/fonts/NotoSerif-Regular.ttf') format('truetype');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'SebaSerif';
-  src: url('/fonts/NotoSerif-Bold.ttf') format('truetype');
+  src: url('/api/fonts/NotoSerif-Bold.ttf') format('truetype');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'SebaSerif';
-  src: url('/fonts/NotoSerif-Italic.ttf') format('truetype');
+  src: url('/api/fonts/NotoSerif-Italic.ttf') format('truetype');
   font-weight: 400;
   font-style: italic;
   font-display: swap;
@@ -134,11 +157,20 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
 }
 
-.fontsize-group {
+.fontsize-group,
+.glyphfont-group {
   width: auto;
+}
+.glyphfont-group .form-select {
+  width: 13.5em;
+  flex: 0 0 auto;
+}
+.glyphfont-icon {
+  font-family: Hieroglyphic;
+  font-size: 1.15rem;
+  line-height: 1;
 }
 .fontsize-group .form-select {
   width: 7em;
@@ -365,6 +397,18 @@ body {
   display: inline-block;
 }
 
+.omni-text {
+  display: inline-block;
+  line-height: 1.25;
+  white-space: nowrap;
+  font-feature-settings: 'liga' 1, 'mark' 1;
+}
+.omni-text.omni-vertical {
+  writing-mode: vertical-lr;
+  text-orientation: upright;
+  font-feature-settings: 'liga' 1, 'mark' 1, 'vert' 1;
+}
+
 .hiero-host {
   display: inline-block;
   line-height: 1.2;
@@ -501,4 +545,30 @@ body {
 .loading-message {
   color: var(--seba-navy);
   font-weight: 500;
+}
+
+/* ------------------------------------------------------------ drawer handle */
+
+.drawer {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  z-index: 5;
+}
+.drawer-handle {
+  position: absolute;
+  top: 12px;
+  right: -18px;
+  width: 18px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--seba-steel);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: var(--seba-steel);
+  color: white;
+  font-size: 0.7rem;
+}
+.drawer-handle:hover {
+  background: var(--seba-blue);
 }
