@@ -13,6 +13,7 @@ interface Props {
   onLineClick: (index: number, e: React.MouseEvent) => void;
   onMove: (index: number, delta: number) => void;
   onDelete: (index: number) => void;
+  onCopy: (index: number) => void;
 }
 
 /** Safari (WebKit without Chrome); its text shaping differs for the NewGardinerOmni fonts. */
@@ -23,7 +24,7 @@ export const TEXT_SCALE = 0.5;
 
 /** The main window. Lines carry data-line-id so a text selection can be mapped back to lines. */
 const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
-  { lines, activeIndex, selectedIds, fontsize, hieroFont, onLineClick, onMove, onDelete },
+  { lines, activeIndex, selectedIds, fontsize, hieroFont, onLineClick, onMove, onDelete, onCopy },
   ref,
 ) {
   const activeRef = useRef<HTMLDivElement>(null);
@@ -58,6 +59,11 @@ const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
               <LineContent line={line} fontsize={line.fontsize ?? fontsize} hieroFont={hieroFont} />
             </div>
             <div className="line-actions" onClick={(e) => e.stopPropagation()}>
+              <button type="button" className="btn btn-sm btn-link" onClick={() => onCopy(i)}
+                title={line.mode === 'hiero' ? 'Copy line (as image and text)' : 'Copy line text'}
+                aria-label="Copy line" disabled={!line.source.trim()}>
+                <i className="fa-regular fa-copy" />
+              </button>
               <button type="button" className="btn btn-sm btn-link" title="Move up" disabled={i === 0} onClick={() => onMove(i, -1)}>
                 <i className="fa-solid fa-arrow-up" />
               </button>

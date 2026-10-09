@@ -35,6 +35,9 @@ class ExportRequest(BaseModel):
     format: str = Field(pattern='^(gly|mdc|res|unicode|pdf|svg)$')
     document: Document
     filename: str = Field(default='document', max_length=200)
+    # SVG only: glyph outlines instead of text with embedded fonts (used for the clipboard,
+    # where browsers strip the fonts).
+    outline: bool = False
 
 
 class ImportResult(BaseModel):
@@ -93,7 +96,7 @@ def export(req: ExportRequest):
         case 'pdf':
             content, warnings = render.export_pdf(doc)
         case 'svg':
-            content, warnings = render.export_svg(doc)
+            content, warnings = render.export_svg(doc, outline=req.outline)
     ext, media_type = EXPORTS[req.format]
     stem = ''.join(c for c in req.filename if c.isalnum() or c in '-_ ').strip() or 'document'
     headers = {

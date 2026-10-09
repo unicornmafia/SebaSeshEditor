@@ -10,6 +10,7 @@ import LoadingOverlay from './components/LoadingOverlay';
 import { asciiToUnicode } from './translit';
 import Toolbar, { stepFontsize } from './components/Toolbar';
 import { loadTabView, openTabDocument, saveTabDocument, saveTabView } from './storage';
+import { copyAsImage } from './clipboard';
 import { useUndoHistory, type EditKind, type Snapshot } from './history';
 import {
   flowOf, HIERO_FONTS, makeDirection, orientationOf,
@@ -96,6 +97,26 @@ async function waitForHieroglyphs(root: () => HTMLElement | null, timeoutMs = 60
       }
     };
     check();
+  });
+}
+
+/** A line's text as copied: the Unicode encoding of hieroglyphs, else the displayed text. */
+function lineText(l: Line): string {
+  if (l.mode === 'hiero') return l.rendered ?? l.source;
+  return l.mode === 'translit' ? asciiToUnicode(l.source) : l.source;
+}
+
+/** Copies lines as image + text (see clipboard.ts) and reports what was copied. */
+function copyLinesAsImage(lines: Line[], text: string, fontsize: number, notify: (n: Omit<Notice, 'id'>) => void) {
+  const n = lines.length;
+  copyAsImage(toStored(lines, fontsize), text).then(async (formats) => {
+    if (formats.length === 0) {
+      // No image accepted: make sure at least the text is on the clipboard.
+      await navigator.clipboard?.writeText(text).catch(() => undefined);
+    }
+    notify(formats.length > 0
+      ? { kind: 'success', title: `Copied ${n} line${n === 1 ? '' : 's'} as ${formats.includes('image/svg+xml') ? 'SVG (and PNG)' : 'PNG'} image` }
+      : { kind: 'warning', title: 'Copied as text only', details: ['This browser did not accept an image on the clipboard.'] });
   });
 }
 
@@ -358,12 +379,17 @@ export default function App() {
     return () => document.removeEventListener('selectionchange', onSelectionChange);
   }, []);
 
-  // Copying from the main window: the drawn hieroglyphs carry no usable text, so the clipboard
-  // gets each selected line's own text instead, one line per line: the exact Unicode encoding
-  // for hieroglyphic lines, the displayed text for the others. A selection within a single text
-  // line is left to the browser, so part of a sentence can be copied.
+  // Copying from the main window. A selection that includes hieroglyphic lines is copied as an
+  // image: an SVG export of the selected lines (plus a PNG for applications without SVG), with
+  // their text alongside, one line per line: the Unicode encoding for hieroglyphic lines, the
+  // displayed text for the others. The text is set at once; the image follows when exported.
+  // A selection of text lines only is left to the browser, so part of a sentence can be copied.
   const linesRef = useRef(lines);
   linesRef.current = lines;
+  const fontsizeRef = useRef(fontsize);
+  fontsizeRef.current = fontsize;
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
   useEffect(() => {
     const box = displayRef.current;
     if (!box) return;
@@ -374,16 +400,28 @@ export default function App() {
       const ids = new Set([...box.querySelectorAll<HTMLElement>('[data-line-id]')]
         .filter((el) => range.intersectsNode(el)).map((el) => el.dataset.lineId!));
       const selected = linesRef.current.filter((l) => ids.has(l.id));
-      if (selected.length === 0 || (selected.length === 1 && selected[0].mode !== 'hiero')) return;
-      const text = selected
-        .map((l) => (l.mode === 'hiero' ? l.rendered ?? '' : l.mode === 'translit' ? asciiToUnicode(l.source) : l.source))
-        .join('\n');
+      if (!selected.some((l) => l.mode === 'hiero')) return;
+      const text = selected.map(lineText).join('\n');
       e.clipboardData.setData('text/plain', text);
       e.preventDefault();
+      copyLinesAsImage(selected, text, fontsizeRef.current, notifyRef.current);
     };
     box.addEventListener('copy', onCopy);
     return () => box.removeEventListener('copy', onCopy);
   }, []);
+
+  /** Copy button on a line: hieroglyphic lines as image and text (like ⌘C), others as text. */
+  const copyLine = (index: number) => {
+    const line = lines[index];
+    const text = lineText(line);
+    if (line.mode === 'hiero' && line.rendered) {
+      copyLinesAsImage([line], text, fontsize, notify);
+      return;
+    }
+    navigator.clipboard?.writeText(text)
+      .then(() => notify({ kind: 'success', title: 'Copied line text' }))
+      .catch(() => notify({ kind: 'danger', title: 'Could not copy to the clipboard' }));
+  };
 
   const clearSelection = () => {
     setSelectedIds((prev) => (prev.size ? new Set() : prev));
@@ -791,6 +829,7 @@ export default function App() {
               onLineClick={onLineClick}
               onMove={moveLine}
               onDelete={deleteLine}
+              onCopy={copyLine}
             />
           </main>
           {loading && <LoadingOverlay message={loading} />}

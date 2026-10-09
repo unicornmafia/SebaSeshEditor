@@ -67,6 +67,12 @@ rendering, dimmed. As soon as the text is valid again, it renders.
   line, Shift+↑/↓ in the input line, or by highlighting text in the input line; Esc or the × on the
   "lines selected" chip clears the selection. A new line takes the size of the line before it. Sizes carry
   into PDF/SVG export.
+* **Copy** (⌘C / Ctrl+C) with hieroglyphic lines selected puts them on the clipboard as an image: an SVG
+  export of the selected lines with all text as outlines (browsers strip fonts from clipboard SVG), a
+  PNG of it, and the Unicode text, so each application can paste the format it understands. Chrome
+  writes all three; Safari writes PNG and text. A selection of text lines only copies plain text.
+  Each line also has a copy button (with move up/down and delete): a hieroglyphic line is copied the
+  same way, any other line as its displayed text.
 * **Keys:** Enter adds a new line, ↑/↓ move between lines, and Backspace on an empty line deletes it.
   You can also click any line to edit it.
 * Documents are saved automatically in the browser (localStorage), one per tab: each tab edits its own

@@ -26,6 +26,7 @@ from reportlab.pdfgen import canvas as rl_canvas
 
 from . import hiero
 from .documents import Document, size_of, text_of
+from .outline import outline_hieropy_svg, outline_text
 
 FONT_DIR = Path(__file__).resolve().parent.parent / 'fonts'
 
@@ -220,7 +221,8 @@ def _font_face(family: str, path: Path, chars: set[str]) -> str:
     return f"@font-face {{ font-family: '{family}'; src: url(data:font/ttf;base64,{data}) format('truetype'); }}"
 
 
-def export_svg(doc: Document, embed_fonts: bool = True) -> tuple[str, list[str]]:
+def export_svg(doc: Document, embed_fonts: bool = True, outline: bool = False) -> tuple[str, list[str]]:
+    """One SVG for the document. With `outline`, all text becomes glyph outlines (no fonts needed)."""
     warnings: list[str] = []
     margin = doc.fontsize * 0.5
     gap = doc.fontsize * LINE_GAP
@@ -242,7 +244,10 @@ def export_svg(doc: Document, embed_fonts: bool = True) -> tuple[str, list[str]]
             if hl is None:
                 continue
             svg, w, h = hiero.render_svg(hl.fragment, fontsize, transparent=True, direction=line.direction)
-            hiero_chars.update(c for c in svg if ord(c) > 0x2000)
+            if outline:
+                svg = outline_hieropy_svg(svg, hiero_font_path())
+            else:
+                hiero_chars.update(c for c in svg if ord(c) > 0x2000)
             if hl.options.rl():
                 body.append((svg, w, y))
             else:
@@ -252,11 +257,16 @@ def export_svg(doc: Document, embed_fonts: bool = True) -> tuple[str, list[str]]
         else:
             text = text_of(line)
             size = fontsize * TEXT_SCALE
-            for font, run in text_runs(line.mode, text):
-                font_chars.setdefault(font, set()).update(run)
-            body.append(
-                f'<text x="{margin:g}" y="{y + size:g}" font-family="{SVG_FONT_FAMILIES[line.mode]}" '
-                f'font-size="{size:g}" xml:space="preserve">{escape(text)}</text>')
+            runs = text_runs(line.mode, text)
+            if outline:
+                body.append(outline_text([(FONT_DIR / filename, run) for (_, filename), run in runs],
+                                         margin, y + size, size))
+            else:
+                for font, run in runs:
+                    font_chars.setdefault(font, set()).update(run)
+                body.append(
+                    f'<text x="{margin:g}" y="{y + size:g}" font-family="{SVG_FONT_FAMILIES[line.mode]}" '
+                    f'font-size="{size:g}" xml:space="preserve">{escape(text)}</text>')
             width = max(width, text_width(line.mode, text, size))
             y += size * 1.35 + gap
 
@@ -266,7 +276,7 @@ def export_svg(doc: Document, embed_fonts: bool = True) -> tuple[str, list[str]]
             part[0].replace('<svg ', f'<svg x="{total_w - margin - part[1]:g}" y="{part[2]:g}" ', 1)
             for part in body]
     style = ''
-    if embed_fonts:
+    if embed_fonts and not outline:
         faces = []
         if hiero_chars:
             faces.append(_font_face('NewGardiner', hiero_font_path(), hiero_chars))

@@ -25,11 +25,13 @@ export interface ExportResult {
   warnings: string[];
 }
 
-export async function exportDocument(format: ExportFormat, document: StoredDocument, filename: string): Promise<ExportResult> {
+export async function exportDocument(
+  format: ExportFormat, document: StoredDocument, filename: string, options: { outline?: boolean } = {},
+): Promise<ExportResult> {
   const res = await fetch('/api/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ format, document, filename }),
+    body: JSON.stringify({ format, document, filename, ...options }),
   });
   if (!res.ok) throw new Error(`Export failed: ${res.status} ${res.statusText}`);
   const disposition = res.headers.get('Content-Disposition') ?? '';

@@ -323,3 +323,15 @@ def test_j_means_i_in_hybrid_input():
 def test_gly_export_writes_i_for_j():
     text, _ = export_mdc(Document(lines=[Line(source='jnj-j-w')]), jsesh_header=False)
     assert text == 'ini-i-w-!\n'
+
+
+def test_outlined_svg_export_needs_no_fonts():
+    doc = {'fontsize': 40, 'lines': [
+        {'mode': 'hiero', 'source': '<-ra:mn->-A1\\-[[-B1-]]'}, {'mode': 'hiero', 'source': 'i-w', 'direction': 'hrl'},
+        {'mode': 'translit', 'source': '^imn-Htp Xnmw'}, {'mode': 'bold', 'source': 'Bold'}]}
+    r = client.post('/api/export', json={'format': 'svg', 'document': doc, 'outline': True})
+    assert r.status_code == 200
+    assert '<text' not in r.text and '<style' not in r.text and '@font-face' not in r.text
+    assert r.text.count('<path') >= 10
+    plain = client.post('/api/export', json={'format': 'svg', 'document': doc})
+    assert '<text' in plain.text and '@font-face' in plain.text  # the normal export is unchanged
