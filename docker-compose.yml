@@ -1,9 +1,9 @@
 services:
   sebasesh:
+    image: 127.0.0.1:5000/sebasesh:latest
     build:
       context: .
       target: runtime
-    image: sebasesh:latest
     ports:
       - "8090:8000"
     restart: unless-stopped
