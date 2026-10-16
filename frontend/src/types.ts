@@ -19,13 +19,24 @@ export const MODES: { mode: Mode; label: string; short: string; icon: string; gl
   { mode: 'italic', label: 'Italic', short: 'Italic', icon: 'fa-solid fa-italic' },
 ];
 
+/** Piece of a line with JSesh line references (|B237): hieroglyphs or a reference label. */
+export interface RenderPart {
+  unicode: string | null;
+  ref: string | null;
+}
+
 /** Result of interpreting a hieroglyphic line on the server (hieropy). */
 export interface RenderResult {
   ok: boolean;
   error: string;
   warnings: string[];
+  /** The hieroglyphs, without any line references. */
   unicode: string;
   sourceFormat: 'empty' | 'mdc' | 'unicode' | 'hybrid';
+  /** Only for lines with line references: hieroglyphs and references in order. */
+  parts?: RenderPart[];
+  /** The line's top-level groups and references one by one (what can be selected and cut). */
+  items?: RenderPart[];
 }
 
 export interface Line {
@@ -40,11 +51,27 @@ export interface Line {
   result?: RenderResult;
   /** Unicode of the last source that could be rendered; what the display box shows. */
   rendered?: string;
+  /** Parts of that source, when it has line references. */
+  renderedParts?: RenderPart[];
+  /** Its groups and references one by one. */
+  renderedItems?: RenderPart[];
 }
+
+/**
+ * Where the user is among the glyphs of the current line: a selection of items (from `anchor`
+ * to `head`, both included) or a caret before item `at` (to paste at).
+ */
+export type GlyphCursor =
+  | { lineId: string; kind: 'items'; anchor: number; head: number }
+  | { lineId: string; kind: 'caret'; at: number };
 
 export interface StoredDocument {
   fontsize: number;
   lines: { mode: Mode; source: string; fontsize?: number; direction?: Direction }[];
+  /** File name the document is saved (or will be saved) under; absent for an untitled document. */
+  name?: string;
+  /** Hash of the content when last saved to a file (see files.ts), to show unsaved changes. */
+  savedHash?: number;
 }
 
 /**

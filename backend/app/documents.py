@@ -89,15 +89,28 @@ def _line_to_mdc(line: Line, warnings: list[str], index: int) -> str | None:
         return f'+{MODE_TO_JSESH[line.mode]}{text}+s'
     interp = hiero.interpret(line.source)
     if not interp.ok:
+        if not hiero.contains_unicode_hieroglyphs(line.source):
+            # MdC that cannot be drawn here may still be fine for JSesh: keep it as typed.
+            warnings.append(f'Line {index}: written as typed, cannot be rendered ({interp.error})')
+            return ' '.join(line.source.split())
         warnings.append(f'Line {index}: skipped, cannot be rendered ({interp.error})')
         return None
-    if interp.source_format == 'mdc':
+    # Unknown codes are written as typed (JSesh may know them), but still noted.
+    warnings.extend(f'Line {index}: {w.split(":")[0]} (written as typed)' for w in interp.sign_notes)
+    if interp.source_format == 'mdc' or (interp.source_format == 'empty' and interp.parts):
         # Keep the user's own MdC (with 'j' read as 'i'): it is what JSesh understands best.
         return interp.mdc
-    with hiero.HIEROPY_LOCK:
-        mdc, conv_warnings = fragment_to_mdc(interp.fragment)
-    warnings.extend(f'Line {index}: {w}' for w in conv_warnings)
-    return mdc
+    parts = interp.parts or [hiero.Part(fragment=interp.fragment)]
+    out = []
+    for part in parts:
+        if part.ref is not None:
+            out.append('|' + part.ref)
+            continue
+        with hiero.HIEROPY_LOCK:
+            mdc, conv_warnings = fragment_to_mdc(part.fragment)
+        warnings.extend(f'Line {index}: {w}' for w in conv_warnings)
+        out.append(mdc)
+    return '-'.join(out)
 
 
 def _non_default_directions(doc: Document) -> list[int]:
@@ -142,6 +155,7 @@ def export_res(doc: Document) -> tuple[str, list[str]]:
         if not interp.ok:
             warnings.append(f'Line {i}: skipped, cannot be rendered ({interp.error})')
             continue
+        warnings.extend(f'Line {i}: {w}' for w in interp.sign_notes)
         with hiero.HIEROPY_LOCK:
             res, conv_warnings = fragment_to_res(interp.fragment)
         warnings.extend(f'Line {i}: {w}' for w in conv_warnings)
@@ -164,6 +178,7 @@ def export_unicode(doc: Document) -> tuple[str, list[str]]:
             if not interp.ok:
                 warnings.append(f'Line {i}: skipped, cannot be rendered ({interp.error})')
                 continue
+            warnings.extend(f'Line {i}: {w}' for w in interp.sign_notes)
             out.append(interp.unicode + '\n')
         else:
             out.append(text_of(line) + '\n')
@@ -202,21 +217,52 @@ def import_document(filename: str, content: str, fmt: str | None = None) -> tupl
     return lines, warnings, fmt
 
 
+_SPACED_SUFFIX = re.compile(r'\s+(?=\.\S)')
+
+
+def join_suffixes(translit: str) -> str:
+    """Attaches transliterated words written with a leading '.' to the word before them:
+    'Hdb .n .i' -> 'Hdb.n.i' (as JSesh files often space suffixes and endings)."""
+    return _SPACED_SUFFIX.sub('', translit)
+
+
 def import_mdc(content: str) -> tuple[list[Line], list[str]]:
     """Split JSesh/MdC text into editor lines.
 
-    '!' (and '!!') end a line, as do newlines. ``+x...`` text segments become
-    separate text lines; ``++...`` segments (JSesh header/comments) are skipped.
+    '!' (and '!!') end a line, as do newlines; a newline right after '!' ends the same
+    line. ``+x...`` text segments become separate text lines; ``++...`` segments (JSesh
+    header/comments) are skipped. A line end with nothing before it is a blank line
+    (kept, except at the end of the file); lines holding only a header do not count.
+    A text segment that is only '.' (``+l.+s``), or a line that is only a '.', ends the text
+    line before it instead (typically the full stop of a transliteration); a '.' sign between
+    text segments on a line is JSesh spacing, and dropped.
     """
     lines: list[Line] = []
     warnings: list[str] = []
     current: list[str] = []
+    # Whether the current line had a text segment or header, so is not blank when empty.
+    had_segment = False
 
-    def flush():
+    def flush() -> str:
+        """Adds the hieroglyphs read so far as a line. Returns what they were: '', '.' or 'glyphs'."""
         seg = ''.join(current).strip(' \t\r\n-_')
         current.clear()
+        if seg == '.':
+            return '.'  # never a line of its own (see end_line)
         if seg:
             lines.append(Line(mode='hiero', source=seg))
+            return 'glyphs'
+        return ''
+
+    def end_line():
+        nonlocal had_segment
+        found = flush()
+        if not had_segment:
+            if found == '':
+                lines.append(Line(mode='hiero', source=''))
+            elif found == '.':
+                _end_with_period(lines)
+        had_segment = False
 
     i, n = 0, len(content)
     while i < n:
@@ -227,6 +273,7 @@ def import_mdc(content: str) -> tuple[list[Line], list[str]]:
                 i += 2
                 continue
             flush()
+            had_segment = True
             j = i + 2
             buf = []
             while j < n and content[j] != '+':
@@ -234,18 +281,33 @@ def import_mdc(content: str) -> tuple[list[Line], list[str]]:
                     j += 1
                 buf.append(content[j])
                 j += 1
-            text = ''.join(buf).strip()
-            if marker != '+' and text:
-                lines.append(Line(mode=JSESH_TO_MODE.get(marker, 'latin'), source=text))
+            if marker != '+':
+                mode = JSESH_TO_MODE.get(marker, 'latin')
+                text = ''.join(buf).strip()
+                if text == '.':
+                    _end_with_period(lines)  # e.g. +tsDm.n=f+s-+l.+s: the transliteration's full stop
+                else:
+                    lines.append(Line(mode=mode, source=join_suffixes(text) if mode == 'translit' else text))
             i = j
             continue
-        if c in '!\n':
-            flush()
+        if c == '!':
+            i += 1
+            if i < n and content[i] == '!':
+                i += 1
+            while i < n and content[i] in ' \t\r':
+                i += 1
+            if i < n and content[i] == '\n':
+                i += 1
+            end_line()
+            continue
+        if c == '\n':
+            end_line()
             i += 1
             continue
         current.append(c)
         i += 1
     flush()
+    _drop_trailing_blanks(lines)
 
     for k, line in enumerate(lines, 1):
         if line.mode == 'hiero':
@@ -262,6 +324,7 @@ def import_res(content: str) -> tuple[list[Line], list[str]]:
     for k, raw in enumerate(content.splitlines(), 1):
         raw = raw.strip()
         if not raw:
+            lines.append(Line(mode='hiero', source=''))
             continue
         with hiero.HIEROPY_LOCK:
             parser = ResParser()
@@ -277,6 +340,7 @@ def import_res(content: str) -> tuple[list[Line], list[str]]:
             fragment = converter.convert_fragment(parsed)
         warnings.extend(f'Line {k}: {e}' for e in converter.errors)
         lines.append(Line(mode='hiero', source=str(fragment), direction=parsed.direction or 'hlr'))
+    _drop_trailing_blanks(lines)
     return lines, warnings
 
 
@@ -286,6 +350,9 @@ _TRANSLIT_CHARS = re.compile('[Ꜣ-ꜥꞼꞽḤḥḪḫẖ̱ḲḳṮṯḎḏ]
 def import_unicode(content: str) -> tuple[list[Line], list[str]]:
     lines: list[Line] = []
     for raw in content.splitlines():
+        if not raw.strip():
+            lines.append(Line(mode='hiero', source=''))
+            continue
         pos = 0
         for m in re.finditer(UNI_STRING, raw):
             if not re.search('[\U00013000-\U000143FF]', m.group(0)):
@@ -294,7 +361,20 @@ def import_unicode(content: str) -> tuple[list[Line], list[str]]:
             lines.append(Line(mode='hiero', source=m.group(0)))
             pos = m.end()
         _add_text_line(lines, raw[pos:])
+    _drop_trailing_blanks(lines)
     return lines, []
+
+
+def _end_with_period(lines: list[Line]):
+    """A line holding only '.': the full stop of the text line before it (else dropped)."""
+    prev = lines[-1] if lines else None
+    if prev and prev.mode != 'hiero' and prev.source and not prev.source.endswith('.'):
+        prev.source += '.'
+
+
+def _drop_trailing_blanks(lines: list[Line]):
+    while lines and lines[-1].mode == 'hiero' and not lines[-1].source:
+        lines.pop()
 
 
 def _add_text_line(lines: list[Line], text: str):
@@ -302,6 +382,6 @@ def _add_text_line(lines: list[Line], text: str):
     if not text:
         return
     if _TRANSLIT_CHARS.search(text):
-        lines.append(Line(mode='translit', source=unicode_to_ascii(text)))
+        lines.append(Line(mode='translit', source=join_suffixes(unicode_to_ascii(text))))
     else:
         lines.append(Line(mode='latin', source=text))

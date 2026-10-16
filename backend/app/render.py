@@ -97,6 +97,8 @@ def wrap_text(mode: str, text: str, size: float, max_width: float) -> list[str]:
 class HieroLine:
     fragment: Fragment
     options: Options
+    # Glyph runs and line references (|B237), when the line has references.
+    parts: list[hiero.Part]
 
 
 def _hiero_line(source: str, fontsize: int, imagetype: str, warnings: list[str], index: int,
@@ -105,10 +107,11 @@ def _hiero_line(source: str, fontsize: int, imagetype: str, warnings: list[str],
     if not interp.ok:
         warnings.append(f'Line {index}: skipped, cannot be rendered ({interp.error})')
         return None
-    if not interp.fragment.groups:
+    warnings.extend(f'Line {index}: {w}' for w in interp.sign_notes)
+    if not interp.fragment.groups and not interp.parts:
         return None
     return HieroLine(interp.fragment, Options(imagetype=imagetype, fontsize=fontsize, transparent=True,
-                                              direction=direction))
+                                              direction=direction), interp.parts)
 
 
 # ---------------------------------------------------------------- PDF
@@ -127,6 +130,90 @@ class CanvasPrintedPdf(PrintedPdf):
             super().complete()
         finally:
             self.canvas.save = save
+
+
+# Line references (|B237): label size relative to the hieroglyphs (as in the editor), and
+# the space around a reference.
+REF_SCALE = 0.3
+REF_PAD = 0.1
+
+
+def _layout_pdf_line(canv, hl: HieroLine, fontsize: int):
+    """Lays out a hieroglyphic line: its glyph runs, with a bar and label for each line reference.
+
+    Returns (width, height, draw); draw() draws the line with its lower left corner at the origin.
+    Horizontal lines run their pieces along the line (right to left for 'hrl') with the labels
+    above; vertical lines stack them, each reference a bar across the column under its label.
+    """
+    options = hl.options
+    vertical = options.v()
+    label_size = fontsize * REF_SCALE
+    label_h = label_size * 1.3
+    pad = fontsize * REF_PAD
+    font = _register(*TEXT_FONTS['latin'][0])
+
+    pieces = []  # (printed run or None, fragment or reference label, width, height)
+    for part in hl.parts or [hiero.Part(fragment=hl.fragment)]:
+        if part.ref is not None:
+            pieces.append((None, part.ref, pdfmetrics.stringWidth(part.ref, font, label_size) + 2 * pad, label_h + pad))
+        elif part.fragment.groups:
+            frag = part.fragment
+            frag.format(options)
+            w_em, h_em = frag.size(options)
+            printed = CanvasPrintedPdf(canv, w_em + options.sep + 2 * options.hmargin,
+                                       h_em + options.sep + 2 * options.vmargin, options)
+            pieces.append((printed, frag, printed.width(), printed.height()))
+    runs = [p for p in pieces if p[0] is not None]
+    has_refs = len(runs) < len(pieces)
+
+    if vertical:
+        width = max([p[2] for p in runs] + [fontsize * 0.6 if has_refs else 0])
+        height = sum(p[3] for p in pieces)
+    else:
+        glyph_h = max([p[3] for p in runs] + [fontsize])
+        width = sum(p[2] for p in pieces)
+        height = glyph_h + (label_h if has_refs else 0)
+
+    def draw_run(printed, frag, x, y):
+        canv.saveState()
+        canv.translate(x, y)
+        for g in frag.groups:
+            printed.selectable_text += chars_to_fallback(str(g), options)
+            g.print(options, printed)
+        printed.complete()
+        canv.restoreState()
+
+    def draw_label(label, x, y):
+        canv.setFont(font, label_size)
+        canv.setFillColorRGB(0, 0, 0)
+        canv.drawCentredString(x, y, label)
+
+    def draw():
+        canv.setStrokeColorRGB(0, 0, 0)
+        canv.setLineWidth(max(0.5, fontsize * 0.015))
+        if vertical:
+            top = height
+            for printed, item, w, h in pieces:
+                if printed:
+                    draw_run(printed, item, 0, top - h)
+                else:
+                    draw_label(item, width / 2, top - label_size)
+                    bar_y = top - label_h - pad / 2
+                    canv.line(width * 0.1, bar_y, width * 0.9, bar_y)
+                top -= h
+            return
+        x = width if options.rl() else 0
+        for printed, item, w, h in pieces:
+            left = x - w if options.rl() else x
+            if printed:
+                draw_run(printed, item, left, (glyph_h - h) / 2)
+            else:
+                center = left + w / 2
+                canv.line(center, glyph_h * 0.05, center, glyph_h)
+                draw_label(item, center, glyph_h + label_size * 0.3)
+            x = left if options.rl() else x + w
+
+    return width, height, draw
 
 
 def export_pdf(doc: Document) -> tuple[bytes, list[str]]:
@@ -156,24 +243,17 @@ def export_pdf(doc: Document) -> tuple[bytes, list[str]]:
             if hl is None:
                 continue
             with hiero.HIEROPY_LOCK:
-                frag, options = hl.fragment, hl.options
-                frag.format(options)
-                w_em, h_em = frag.size(options)
-                printed = CanvasPrintedPdf(canv, w_em + options.sep + 2 * options.hmargin,
-                                           h_em + options.sep + 2 * options.vmargin, options)
+                w, h, draw = _layout_pdf_line(canv, hl, fontsize)
                 # Long lines (or tall vertical columns) are scaled down to fit the page.
-                scale = min(1.0, avail_w / printed.width(), avail_h / printed.height())
-                width, height = printed.width() * scale, printed.height() * scale
+                scale = min(1.0, avail_w / w, avail_h / h)
+                width, height = w * scale, h * scale
                 ensure_room(height)
                 # Right-to-left lines are set flush right, as in JSesh.
-                x = page_w - PAGE_MARGIN - width if options.rl() else PAGE_MARGIN
+                x = page_w - PAGE_MARGIN - width if hl.options.rl() else PAGE_MARGIN
                 canv.saveState()
                 canv.translate(x, y - height)
                 canv.scale(scale, scale)
-                for g in frag.groups:
-                    printed.selectable_text += chars_to_fallback(str(g), options)
-                    g.print(options, printed)
-                printed.complete()
+                draw()
                 canv.restoreState()
             if scale < 1:
                 warnings.append(f'Line {i}: scaled down to fit the page')
@@ -241,7 +321,7 @@ def export_svg(doc: Document, embed_fonts: bool = True, outline: bool = False) -
                 y += fontsize * 0.5
                 continue
             hl = _hiero_line(line.source, fontsize, 'svg', warnings, i, line.direction)
-            if hl is None:
+            if hl is None or not hl.fragment.groups:
                 continue
             svg, w, h = hiero.render_svg(hl.fragment, fontsize, transparent=True, direction=line.direction)
             if outline:

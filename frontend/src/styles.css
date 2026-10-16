@@ -111,6 +111,56 @@ body {
 }
 .brand-short { display: none; }
 
+/* Open: a long press lists recent files (no text selection or touch callout while holding). */
+.open-button {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.recent-menu {
+  min-width: 18rem;
+  max-width: min(28rem, calc(100vw - 32px));
+}
+.recent-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+}
+.recent-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recent-when {
+  flex: none;
+  margin-left: 1rem;
+  color: #6c8aa8;
+  font-size: 0.8rem;
+}
+
+/* The document's file name, centred in the navbar. */
+.doc-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 1rem;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+.doc-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-unsaved {
+  margin-left: 0.35rem;
+  color: #ffd27a;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
 .navbar-links {
   display: flex;
   align-items: center;
@@ -473,6 +523,43 @@ body {
   white-space: nowrap;
 }
 
+/* A hieroglyphic line with JSesh line references (|B237): runs of signs with bars between. */
+.ref-line {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0.15em;
+  vertical-align: middle;
+}
+.ref-line-hrl { flex-direction: row-reverse; }
+.ref-line-vlr, .ref-line-vrl { flex-direction: column; }
+.ref-line > .hiero-host, .ref-line > .omni-text { align-self: center; }
+.line-ref {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  color: #4a5b6d;
+  font-family: 'SebaSerif', serif;
+  line-height: 1.1;
+  user-select: none;
+}
+.line-ref-label { white-space: nowrap; }
+.line-ref-bar {
+  flex: 1 1 auto;
+  min-height: 1.5em;
+  border-left: 1px solid currentColor;
+}
+/* In columns the bar runs across the column, under the label (as in the PDF). */
+.ref-line-vlr .line-ref, .ref-line-vrl .line-ref { align-self: stretch; }
+.ref-line-vlr .line-ref-bar, .ref-line-vrl .line-ref-bar {
+  flex: none;
+  align-self: stretch;
+  min-height: 0;
+  min-width: 1.5em;
+  margin: 0.2em 10%;
+  border-left: none;
+  border-top: 1px solid currentColor;
+}
+
 .text-line {
   display: inline-block;
   line-height: 1.35;
@@ -692,4 +779,109 @@ body {
   .brand-full { display: none; }
   .brand-short { display: inline; }
   .navbar-brand { font-size: 1.1rem; }
+}
+
+/* Hidden frame that holds the PDF while it prints (print.ts). */
+.print-frame {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border: 0;
+  visibility: hidden;
+}
+
+/* Search (⌘F): the box over the top right of the main window, and matching lines. */
+.find-bar {
+  position: absolute;
+  top: 8px;
+  right: 24px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 32px);
+  padding: 4px 6px 4px 10px;
+  background: white;
+  border: 1px solid #c6d4e1;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(4, 18, 64, 0.15);
+}
+.find-icon { color: #6c8aa8; }
+.find-input { width: 16rem; min-width: 6rem; flex: 1 1 auto; }
+.find-count {
+  flex: none;
+  min-width: 5.5em;
+  color: #6c8aa8;
+  font-size: 0.8rem;
+  text-align: center;
+  white-space: nowrap;
+}
+.find-scope .btn { padding: 1px 8px; }
+.find-bar .btn-link { color: #4a5b6d; padding: 2px 6px; }
+.display-line.search-match {
+  box-shadow: inset 3px 0 0 #f0c36d;
+}
+.display-line.search-match.active {
+  background: #fff1c9;
+  border-left-color: #e0a526;
+}
+.display-line mark {
+  background: #ffe08a;
+  padding: 0;
+  border-radius: 2px;
+}
+@media (max-width: 640px) {
+  .find-bar { left: 16px; right: 16px; flex-wrap: wrap; }
+  .find-input { width: auto; }
+}
+
+/* The current hieroglyphic line, group by group: groups can be selected, and pasted between. */
+.glyph-items { gap: 0; }
+.glyph-item {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 3px;
+  cursor: pointer;
+  touch-action: none;
+}
+.glyph-item:hover { background: rgba(29, 111, 216, 0.08); }
+.glyph-item.selected {
+  background: rgba(29, 111, 216, 0.22);
+  box-shadow: 0 0 0 1px rgba(29, 111, 216, 0.5);
+}
+.glyph-gap {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+  width: 0.3em;
+  cursor: text;
+}
+.glyph-gap:hover { background: rgba(29, 111, 216, 0.06); }
+.glyph-gap.caret::after {
+  content: '';
+  position: absolute;
+  left: calc(50% - 1px);
+  top: 4%;
+  bottom: 4%;
+  border-left: 2px solid #1d6fd8;
+  animation: glyph-caret-blink 1s steps(1) infinite;
+}
+.ref-line-vlr .glyph-gap, .ref-line-vrl .glyph-gap { width: auto; height: 0.3em; }
+.ref-line-vlr .glyph-gap.caret::after, .ref-line-vrl .glyph-gap.caret::after {
+  left: 4%; right: 4%; top: calc(50% - 1px); bottom: auto;
+  border-left: none;
+  border-top: 2px solid #1d6fd8;
+}
+@keyframes glyph-caret-blink { 50% { opacity: 0; } }
+
+/* Holds the focus while glyphs are selected, so ⌘C/⌘X/⌘V reach the editor in every browser. */
+.glyph-clipboard {
+  position: fixed;
+  left: -1000px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }

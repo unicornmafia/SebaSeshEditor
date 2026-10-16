@@ -19,6 +19,23 @@ export function renderBatch(texts: string[]): Promise<RenderResult[]> {
   return postJson('/api/render-batch', { texts });
 }
 
+export interface EditResult {
+  ok: boolean;
+  error: string;
+  /** The line's new source. */
+  source: string;
+  /** copy/cut: what was taken, as MdC. */
+  mdc: string;
+  /** paste: number of items inserted. */
+  count: number;
+  warnings: string[];
+}
+
+/** Copies or cuts items [start, end) of a hieroglyphic line, or pastes `text` before item `start`. */
+export function editLine(source: string, op: 'copy' | 'cut' | 'paste', start: number, end = 0, text = ''): Promise<EditResult> {
+  return postJson('/api/edit', { source, op, start, end, text });
+}
+
 export interface ExportResult {
   blob: Blob;
   filename: string;

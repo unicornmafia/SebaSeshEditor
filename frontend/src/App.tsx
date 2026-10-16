@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import * as api from './api';
 import AboutDialog from './components/AboutDialog';
 import DisplayBox from './components/DisplayBox';
@@ -11,10 +11,18 @@ import { asciiToUnicode } from './translit';
 import Toolbar, { stepFontsize } from './components/Toolbar';
 import { loadTabView, openTabDocument, saveTabDocument, saveTabView } from './storage';
 import { copyAsImage } from './clipboard';
+import { printPdf } from './print';
+import { lineMatches, signsOf, type SearchScope } from './search';
+import FindBar from './components/FindBar';
+import {
+  CAN_SAVE_IN_PLACE, UNTITLED, addRecent, contentHash, pickOpenFile, reopenRecent, type RecentFile, loadHandle, mayWrite, pickSaveFile, saveNameFor, stemOf, storeHandle,
+  writeFile, type SaveHandle,
+} from './files';
 import { useUndoHistory, type EditKind, type Snapshot } from './history';
 import {
   flowOf, HIERO_FONTS, makeDirection, orientationOf,
   type Direction, type HieroFont, type ExportFormat, type Flow, type Line, type Mode, type Orientation, type RenderResult, type StoredDocument,
+  type GlyphCursor,
 } from './types';
 
 const SIDEBAR_KEY = 'sebasesh.sidebarOpen';
@@ -36,12 +44,14 @@ const tabDocument = openTabDocument();
 // Where the user was in it, if this tab is reloading (else the document opens at the top).
 const savedView = loadTabView(tabDocument.id);
 
-function initialState(): { lines: Line[]; fontsize: number } {
+function initialState(): { lines: Line[]; fontsize: number; name?: string; savedHash?: number } {
   const stored = tabDocument.doc && tabDocument.doc.lines.length > 0 ? tabDocument.doc : null;
   if (!stored) return { lines: [makeLine()], fontsize: DEFAULT_FONTSIZE };
   return {
     lines: stored.lines.map((l) => makeLine(l.mode, l.source, l.fontsize, l.direction)),
     fontsize: stored.fontsize || DEFAULT_FONTSIZE,
+    name: stored.name,
+    savedHash: stored.savedHash,
   };
 }
 
@@ -100,6 +110,16 @@ async function waitForHieroglyphs(root: () => HTMLElement | null, timeoutMs = 60
   });
 }
 
+/** A hieroglyphic line with a server result; what is displayed only changes if it could be rendered. */
+function withResult(l: Line, result: RenderResult): Line {
+  if (!result.ok) return { ...l, result };
+  return {
+    ...l, result, rendered: result.unicode,
+    renderedParts: result.parts?.length ? result.parts : undefined,
+    renderedItems: result.items,
+  };
+}
+
 /** A line's text as copied: the Unicode encoding of hieroglyphs, else the displayed text. */
 function lineText(l: Line): string {
   if (l.mode === 'hiero') return l.rendered ?? l.source;
@@ -151,7 +171,20 @@ export default function App() {
   // render that draws them with HieroJax has been committed and every line is drawn.
   const hideAfterRender = useRef<number | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
-  const [importing, setImporting] = useState<{ filename: string; result: api.ImportResult } | null>(null);
+  const [importing, setImporting] = useState<{
+    filename: string; result: api.ImportResult; file: File; handle?: Parameters<typeof addRecent>[1];
+  } | null>(null);
+  // The file the document is saved under (absent: untitled), and its content when last saved.
+  const [docName, setDocName] = useState<string | undefined>(initial.name);
+  const [savedHash, setSavedHash] = useState<number | undefined>(initial.savedHash);
+  const saveHandle = useRef<SaveHandle | null>(null);
+  // Search (⌘F): the query, and its signs when it reads as MdC (from the server).
+  const [findOpen, setFindOpen] = useState(false);
+  const [findTick, setFindTick] = useState(0);
+  const [findText, setFindText] = useState('');
+  // The signs of a query, with the query they are for (so a late reply never applies to a newer one).
+  const [findSigns, setFindSigns] = useState({ text: '', signs: '' });
+  const [findScope, setFindScope] = useState<SearchScope>('all');
   // Lines selected in the main window; font size changes apply to these (or to everything when empty).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
@@ -188,7 +221,7 @@ export default function App() {
   const applyResult = useCallback((id: string, source: string, result: RenderResult) => {
     setLines((ls) => ls.map((l) =>
       l.id === id && l.source === source && l.mode === 'hiero'
-        ? { ...l, result, rendered: result.ok ? result.unicode : l.rendered }
+        ? withResult(l, result)
         : l));
   }, []);
 
@@ -248,7 +281,7 @@ export default function App() {
         setLines((ls) => ls.map((l) => {
           const r = byId.get(l.id);
           return r && l.source === r.source && l.mode === 'hiero'
-            ? { ...l, result: r.result, rendered: r.result.ok ? r.result.unicode : l.rendered }
+            ? withResult(l, r.result)
             : l;
         }));
         // Only the current load may schedule hiding; a superseded load's results arriving
@@ -274,13 +307,26 @@ export default function App() {
     renderMany(initial.lines, 'Loading document…');
   }, [initial, renderMany]);
 
+  const contentJson = useMemo(() => JSON.stringify(toStored(lines, fontsize)), [lines, fontsize]);
+  const hasContent = useMemo(() => lines.some((l) => l.source.trim()), [lines]);
+  const unsaved = savedHash === undefined ? hasContent : contentHash(contentJson) !== savedHash;
+  const shownName = docName ?? UNTITLED;
+
   useEffect(() => {
-    if (!saveTabDocument(tabDocument.id, toStored(lines, fontsize)) && !storageWarned.current) {
+    document.title = `${unsaved ? '• ' : ''}${shownName} – Seba-Sesh`;
+  }, [shownName, unsaved]);
+
+  useEffect(() => {
+    loadHandle(tabDocument.id).then((h) => { saveHandle.current ??= h; });
+  }, []);
+
+  useEffect(() => {
+    if (!saveTabDocument(tabDocument.id, { ...toStored(lines, fontsize), name: docName, savedHash }) && !storageWarned.current) {
       storageWarned.current = true;
       notify({ kind: 'warning', title: 'Could not save to browser storage', details: [
         'The document is kept while this tab is open; export it to keep a copy.'] });
     }
-  }, [lines, fontsize]);
+  }, [lines, fontsize, docName, savedHash]);
 
   useEffect(() => {
     try {
@@ -480,12 +526,29 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const key = e.key.toLowerCase();
+      if (key === 'f' && !e.shiftKey) {
+        // Search the document rather than the page.
+        e.preventDefault();
+        setFindOpen(true);
+        setFindTick((t) => t + 1);
+        return;
+      }
+      // In the search box, undo/redo edit the query (natively), not the document.
+      if ((key === 'z' || key === 'y') && (e.target as HTMLElement | null)?.closest?.('.find-bar')) return;
       if (key === 'z' && !e.shiftKey) {
         e.preventDefault();
         undoRedoRef.current.undo();
       } else if ((key === 'z' && e.shiftKey) || (key === 'y' && !e.metaKey)) {
         e.preventDefault();
         undoRedoRef.current.redo();
+      } else if (key === 's') {
+        // Save (Shift: save as), rather than the browser saving the web page.
+        e.preventDefault();
+        saveRef.current(e.shiftKey);
+      } else if (key === 'p' && !e.shiftKey) {
+        // Print the document as typeset (the PDF), not the editor's window.
+        e.preventDefault();
+        printRef.current();
       }
     };
     document.addEventListener('keydown', onKey);
@@ -585,6 +648,9 @@ export default function App() {
   }, [caretTick]);
 
   useEffect(() => {
+    setGlyphCursor(null);
+    // Not while going through search results: typing continues in the search box.
+    if (document.activeElement?.closest('.find-bar')) return;
     focusInput();
   }, [activeIndex]);
 
@@ -602,7 +668,7 @@ export default function App() {
     if (mode === line.mode) return;
     recordEdit('mode', line.id);
     setLines((ls) => ls.map((l) =>
-      l.id === line.id ? { ...l, mode, result: undefined, rendered: mode === 'hiero' ? l.rendered : undefined } : l));
+      l.id === line.id ? { ...l, mode, result: undefined, ...(mode === 'hiero' ? {} : { rendered: undefined, renderedParts: undefined, renderedItems: undefined }) } : l));
     if (mode === 'hiero') renderOne(line.id, line.source);
     focusInput();
   };
@@ -685,9 +751,63 @@ export default function App() {
     setLines([makeLine()]);
     setActiveIndex(0);
     scrollToTop();
+    forgetFile(undefined);
   };
 
-  const onImport = async (file: File) => {
+  /** The document is no longer the saved file: it starts over as `name` (absent: untitled). */
+  const forgetFile = (name: string | undefined) => {
+    setDocName(name);
+    setSavedHash(undefined);
+    saveHandle.current = null;
+    storeHandle(tabDocument.id, null);
+  };
+
+  /**
+   * Saves as JSesh .gly: the first time (or with `saveAs`) asks where, later writes over that
+   * file. Without the File System Access API, downloads the file instead.
+   */
+  const onSave = async (saveAs = false) => {
+    if (busy) return;
+    const suggested = docName ?? saveNameFor(UNTITLED);
+    const doc = storedDocument();
+    const hash = contentHash(JSON.stringify(doc));
+    let handle = saveAs ? null : saveHandle.current;
+    try {
+      // The dialog (or permission prompt) must open within the key press or click, before the export.
+      if (CAN_SAVE_IN_PLACE) {
+        if (handle && !(await mayWrite(handle))) handle = null;
+        handle ??= await pickSaveFile(suggested);
+        if (!handle) return; // cancelled
+      }
+      setBusy(true);
+      const result = await api.exportDocument('gly', doc, stemOf(handle?.name ?? suggested));
+      if (handle) {
+        await writeFile(handle, result.blob);
+        if (handle !== saveHandle.current) {
+          saveHandle.current = handle;
+          storeHandle(tabDocument.id, handle);
+        }
+      } else {
+        download(result.blob, suggested);
+      }
+      const name = handle?.name ?? suggested;
+      setDocName(name);
+      setSavedHash(hash);
+      if (result.warnings.length > 0) {
+        notify({ kind: 'warning', title: `Saved ${name} with notes`, details: result.warnings });
+      } else {
+        notify({ kind: 'success', title: `Saved ${name}` });
+      }
+    } catch (err) {
+      notify({ kind: 'danger', title: 'Could not save', details: [(err as Error).message] });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const saveRef = useRef(onSave);
+  saveRef.current = onSave;
+
+  const onImport = async (file: File, handle?: Parameters<typeof addRecent>[1]) => {
     setBusy(true);
     const ticket = showLoading(`Opening ${file.name}…`);
     try {
@@ -695,7 +815,7 @@ export default function App() {
       if (result.lines.length === 0) {
         notify({ kind: 'warning', title: `No text found in ${file.name}`, details: result.warnings });
       } else {
-        setImporting({ filename: file.name, result });
+        setImporting({ filename: file.name, result, file, handle });
       }
     } catch (err) {
       notify({ kind: 'danger', title: `Could not open ${file.name}`, details: [(err as Error).message] });
@@ -718,6 +838,7 @@ export default function App() {
       setLines(imported);
       setActiveIndex(0);
       scrollToTop();
+      forgetFile(saveNameFor(importing.filename));
     } else {
       setLines((ls) => [...ls, ...imported]);
       setActiveIndex(lines.length);
@@ -725,13 +846,32 @@ export default function App() {
     const count = imported.filter((l) => l.mode === 'hiero').length;
     renderMany(imported, `Rendering ${count.toLocaleString()} hieroglyphic line${count === 1 ? '' : 's'}…`);
     notify({ kind: 'success', title: `Opened ${importing.filename} (${imported.length} lines)` });
+    addRecent(importing.file, importing.handle);
     setImporting(null);
+  };
+
+  const onOpenPicker = async () => {
+    try {
+      const picked = await pickOpenFile();
+      if (picked) onImport(picked.file, picked.handle);
+    } catch (err) {
+      notify({ kind: 'danger', title: 'Could not open the file', details: [(err as Error).message] });
+    }
+  };
+
+  const onOpenRecent = async (entry: RecentFile) => {
+    const { file, fromCopy } = await reopenRecent(entry);
+    if (fromCopy && entry.handle) {
+      notify({ kind: 'warning', title: `Opened the copy of ${entry.name} from ${new Date(entry.opened).toLocaleString()}`,
+        details: ['The file itself could not be read (moved, deleted, or permission refused).'] });
+    }
+    onImport(file, fromCopy ? undefined : entry.handle);
   };
 
   const onExport = async (format: ExportFormat) => {
     setBusy(true);
     try {
-      const result = await api.exportDocument(format, storedDocument(), 'sebasesh');
+      const result = await api.exportDocument(format, storedDocument(), stemOf(shownName));
       download(result.blob, result.filename);
       if (result.warnings.length > 0) {
         notify({ kind: 'warning', title: `Exported ${result.filename} with notes`, details: result.warnings });
@@ -743,6 +883,212 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const onPrint = async () => {
+    setBusy(true);
+    let warnings: string[] = [];
+    try {
+      const shown = await printPdf(async () => {
+        const result = await api.exportDocument('pdf', storedDocument(), stemOf(shownName));
+        warnings = result.warnings;
+        return result.blob;
+      });
+      if (warnings.length > 0) {
+        notify({ kind: 'warning', title: 'Printing with notes', details: warnings });
+      } else if (shown === 'tab') {
+        notify({ kind: 'success', title: 'Opened the PDF in a new tab: print it from there' });
+      }
+    } catch (err) {
+      notify({ kind: 'danger', title: 'Could not print', details: [(err as Error).message] });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const printRef = useRef(onPrint);
+  printRef.current = onPrint;
+
+  // ------------------------------------------------------------ glyph cut and paste
+
+  // Groups selected (or a paste position) on the current line; while set, the focus is in a
+  // hidden text box so that ⌘C/⌘X/⌘V arrive as clipboard events in every browser.
+  const [glyphCursor, setGlyphCursor] = useState<GlyphCursor | null>(null);
+  const glyphCursorRef = useRef(glyphCursor);
+  glyphCursorRef.current = glyphCursor;
+  const glyphClipboard = useRef<HTMLTextAreaElement>(null);
+  const glyphBusy = useRef(false);
+
+  const holdGlyphFocus = () => {
+    const el = glyphClipboard.current;
+    if (!el) return;
+    el.value = ' '; // some browsers only send copy/cut events when something is selected
+    el.focus({ preventScroll: true });
+    el.select();
+  };
+
+  const onItemDown = (index: number, shift: boolean) => {
+    const lineId = active.id;
+    setGlyphCursor((c) => {
+      if (!shift || c?.lineId !== lineId) return { lineId, kind: 'items', anchor: index, head: index };
+      const anchor = c.kind === 'items' ? c.anchor : index >= c.at ? c.at : c.at - 1;
+      return { lineId, kind: 'items', anchor: Math.max(0, anchor), head: index };
+    });
+    holdGlyphFocus();
+  };
+  const onItemEnter = (index: number) =>
+    setGlyphCursor((c) => (c?.kind === 'items' ? { ...c, head: index } : c));
+  const onGapDown = (at: number) => {
+    setGlyphCursor({ lineId: active.id, kind: 'caret', at });
+    holdGlyphFocus();
+  };
+
+  /**
+   * Copies, cuts, deletes or pastes at the glyph cursor (on the server, which keeps the MdC as
+   * typed where it can). Pasting over a selection replaces it. Resolves to the MdC taken, if any.
+   */
+  const glyphEdit = async (op: 'copy' | 'cut' | 'delete' | 'paste', text = ''): Promise<string> => {
+    const c = glyphCursorRef.current;
+    const line = c && linesRef.current.find((l) => l.id === c.lineId);
+    if (!c || !line || glyphBusy.current) return '';
+    const [from, to] = c.kind === 'items'
+      ? [Math.min(c.anchor, c.head), Math.max(c.anchor, c.head) + 1] : [c.at, c.at];
+    if (op !== 'paste' && from === to) return '';
+    glyphBusy.current = true;
+    try {
+      let source = line.source;
+      if (op === 'paste' && from < to) {
+        const cut = await api.editLine(source, 'cut', from, to);
+        if (!cut.ok) throw new Error(cut.error);
+        source = cut.source;
+      }
+      const r = await api.editLine(source, op === 'delete' ? 'cut' : op, from, to, text);
+      if (!r.ok) throw new Error(r.error);
+      if (r.warnings.length) notify({ kind: 'warning', title: 'Glyphs edited with notes', details: r.warnings });
+      if (op === 'copy') return r.mdc;
+      // Apply unless the line changed meanwhile.
+      if (linesRef.current.find((l) => l.id === line.id)?.source !== line.source) return r.mdc;
+      recordEdit('insert', line.id);
+      setLines((ls) => ls.map((l) => (l.id === line.id ? { ...l, source: r.source } : l)));
+      renderOne(line.id, r.source);
+      setGlyphCursor({ lineId: line.id, kind: 'caret', at: op === 'paste' ? from + r.count : from });
+      return r.mdc;
+    } catch (err) {
+      notify({ kind: 'danger', title: `Could not ${op === 'delete' ? 'delete' : op} the glyphs`, details: [(err as Error).message] });
+      return '';
+    } finally {
+      glyphBusy.current = false;
+    }
+  };
+
+  /** Puts text that is still being produced on the clipboard (created within the key press). */
+  const writeClipboardLater = (text: Promise<string>) => {
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      const blob = text.then((t) => new Blob([t], { type: 'text/plain' }));
+      navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })])
+        .catch(() => text.then((t) => (t ? navigator.clipboard.writeText(t) : undefined)).catch(() => undefined));
+    } else {
+      text.then((t) => (t ? navigator.clipboard?.writeText(t) : undefined)).catch(() => undefined);
+    }
+  };
+
+  const onGlyphClipboard = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+    if (e.type === 'paste') {
+      const text = e.clipboardData.getData('text/plain');
+      if (text.trim()) glyphEdit('paste', text);
+    } else {
+      writeClipboardLater(glyphEdit(e.type === 'cut' ? 'cut' : 'copy'));
+    }
+  };
+
+  const onGlyphKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const c = glyphCursorRef.current;
+    if (!c) return;
+    const count = active.renderedItems?.length ?? 0;
+    const direction = active.direction ?? 'hlr';
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setGlyphCursor(null);
+      focusInput();
+    } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault();
+      if (c.kind === 'items') {
+        glyphEdit('delete');
+      } else {
+        // A caret deletes the group before it (Backspace) or after it (Delete).
+        const index = e.key === 'Backspace' ? c.at - 1 : c.at;
+        if (index < 0 || index >= count) return;
+        glyphCursorRef.current = { lineId: c.lineId, kind: 'items', anchor: index, head: index };
+        glyphEdit('delete');
+      }
+    } else if (e.key.startsWith('Arrow')) {
+      // Moves the caret along the line: down a column, or along a row in its writing direction.
+      const steps: Record<string, number> = direction.startsWith('v')
+        ? { ArrowDown: 1, ArrowUp: -1 }
+        : direction === 'hrl' ? { ArrowLeft: 1, ArrowRight: -1 } : { ArrowRight: 1, ArrowLeft: -1 };
+      const forward = steps[e.key];
+      if (forward === undefined) return;
+      e.preventDefault();
+      const pos = c.kind === 'caret' ? c.at + forward
+        : forward > 0 ? Math.max(c.anchor, c.head) + 1 : Math.min(c.anchor, c.head);
+      setGlyphCursor({ lineId: c.lineId, kind: 'caret', at: Math.max(0, Math.min(count, pos)) });
+    } else if (!(e.metaKey || e.ctrlKey) && e.key.length === 1) {
+      // Typing goes back to the input bar.
+      setGlyphCursor(null);
+      focusInput();
+    }
+  };
+
+  // ------------------------------------------------------------ search
+
+  // The query read as MdC (or Unicode): its signs, unless it is not valid MdC or names unknown signs.
+  useEffect(() => {
+    const text = findText.trim();
+    if (!findOpen || !text) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      api.renderLine(text, controller.signal)
+        .then((r) => setFindSigns({ text, signs: r.ok && !r.warnings.some((w) => w.startsWith('Unknown sign code'))
+          ? signsOf(r.unicode) : '' }))
+        .catch(() => undefined);
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [findText, findOpen]);
+
+  const findQuery = useMemo(() => {
+    const text = findText.trim();
+    return { text, signs: findSigns.text === text ? findSigns.signs : '', scope: findScope };
+  }, [findText, findSigns, findScope]);
+  const matchIndexes = useMemo(() => (findOpen
+    ? lines.flatMap((l, i) => (lineMatches(l, findQuery) ? [i] : []))
+    : []), [lines, findQuery, findOpen]);
+  const matchIds = useMemo(() => new Set(matchIndexes.map((i) => lines[i].id)), [matchIndexes, lines]);
+  const currentMatch = matchIndexes.indexOf(activeIndex);
+
+  /** Goes to the next (+1) or previous (-1) matching line after/before the current line, wrapping. */
+  const stepMatch = (delta: number) => {
+    if (!matchIndexes.length) return;
+    const next = delta > 0
+      ? matchIndexes.find((i) => i > activeIndex) ?? matchIndexes[0]
+      : [...matchIndexes].reverse().find((i) => i < activeIndex) ?? matchIndexes[matchIndexes.length - 1];
+    clearSelection();
+    setActiveIndex(next);
+  };
+
+  // While typing a query, go to the first match from the current line on (as browsers do).
+  const stepRef = useRef(stepMatch);
+  stepRef.current = stepMatch;
+  useEffect(() => {
+    if (!findOpen || !findQuery.text) return;
+    if (!matchIndexes.includes(activeIndexRef.current)) stepRef.current(1);
+  }, [findQuery, findOpen]); // not on every edit of the lines
+
+  const closeFind = () => {
+    setFindOpen(false);
+    focusInput();
   };
 
   // ------------------------------------------------------------ layout
@@ -757,6 +1103,13 @@ export default function App() {
               <span className="brand-full">Seba-Sesh Hieroglyphic Editor</span>
               <span className="brand-short">Seba-Sesh</span>
             </span>
+          </div>
+          <div className="doc-name" title={docName
+            ? `${docName}${unsaved ? ' (unsaved changes)' : ''}`
+            : 'Not saved yet'}>
+            <i className="fa-regular fa-file-lines me-2" aria-hidden="true" />
+            <span className="doc-name-text">{shownName}</span>
+            {unsaved && <span className="doc-unsaved" aria-label="unsaved changes">•</span>}
           </div>
           <div className="navbar-links">
             <a className="nav-link" href="https://sebaseba.marshbot.com" target="_blank" rel="noopener noreferrer"
@@ -804,6 +1157,10 @@ export default function App() {
         onNew={onNew}
         onImport={onImport}
         onExport={onExport}
+        onPrint={onPrint}
+        onSave={() => onSave(false)}
+        onOpenPicker={onOpenPicker}
+        onOpenRecent={onOpenRecent}
       />
 
       <div className="editor-main">
@@ -830,8 +1187,22 @@ export default function App() {
               onMove={moveLine}
               onDelete={deleteLine}
               onCopy={copyLine}
+              matchIds={matchIds}
+              highlight={findOpen && findScope !== 'hiero' ? findQuery.text : ''}
+              glyphCursor={glyphCursor}
+              onItemDown={onItemDown}
+              onItemEnter={onItemEnter}
+              onGapDown={onGapDown}
             />
+            <textarea ref={glyphClipboard} className="glyph-clipboard" aria-hidden="true" tabIndex={-1}
+              onCopy={onGlyphClipboard} onCut={onGlyphClipboard} onPaste={onGlyphClipboard} onKeyDown={onGlyphKey}
+              onChange={() => undefined}
+              onBlur={() => { if (document.hasFocus()) setGlyphCursor(null); }} />
           </main>
+          {findOpen && (
+            <FindBar text={findText} scope={findScope} count={matchIndexes.length} current={currentMatch}
+              focusTick={findTick} onText={setFindText} onScope={setFindScope} onStep={stepMatch} onClose={closeFind} />
+          )}
           {loading && <LoadingOverlay message={loading} />}
         </div>
       </div>

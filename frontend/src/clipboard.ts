@@ -38,7 +38,7 @@ async function svgToPng(svg: Blob): Promise<Blob> {
 }
 
 /** Safari (WebKit without Chrome): reports SVG clipboard support but rejects SVG writes. */
-const IS_SAFARI = /^((?!chrome|chromium|crios|fxios|edg|android).)*safari/i.test(navigator.userAgent);
+export const IS_SAFARI = /^((?!chrome|chromium|crios|fxios|edg|android).)*safari/i.test(navigator.userAgent);
 
 const supports = (type: string) =>
   typeof ClipboardItem !== 'undefined' && (typeof ClipboardItem.supports !== 'function' || ClipboardItem.supports(type));

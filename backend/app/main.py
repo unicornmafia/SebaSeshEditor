@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import documents, hiero, render
+from . import documents, editing, hiero, render
 from .documents import Document, Line
 
 app = FastAPI(title='SebaSesh')
@@ -23,12 +23,22 @@ class RenderBatchRequest(BaseModel):
     texts: list[str] = Field(max_length=5_000)
 
 
+class RenderPart(BaseModel):
+    """Hieroglyphs (`unicode`) or a JSesh line reference (`ref`)."""
+    unicode: str | None = None
+    ref: str | None = None
+
+
 class RenderResult(BaseModel):
     ok: bool
     error: str = ''
     warnings: list[str] = []
     unicode: str = ''
     sourceFormat: str = 'empty'
+    # Only for lines with line references: hieroglyphs and references in order.
+    parts: list[RenderPart] = []
+    # The line's top-level groups and references, one by one (what can be selected and cut).
+    items: list[RenderPart] = []
 
 
 class ExportRequest(BaseModel):
@@ -52,8 +62,37 @@ def render_text(text: str) -> RenderResult:
         return RenderResult(ok=False, error=interp.error, sourceFormat=interp.source_format)
     # The browser draws the Unicode encoding with HieroJax; hieropy is used for
     # interpretation here and for rendering exports.
+    parts = [RenderPart(ref=p.ref) if p.ref is not None else RenderPart(unicode=str(p.fragment))
+             for p in interp.parts]
+    items = [RenderPart(ref=i.ref) if i.ref is not None else RenderPart(unicode=editing.item_unicode(i))
+             for i in editing.items_of(interp)]
     return RenderResult(ok=True, warnings=interp.warnings, unicode=interp.unicode,
-                        sourceFormat=interp.source_format)
+                        sourceFormat=interp.source_format, parts=parts, items=items)
+
+
+class EditRequest(BaseModel):
+    source: str = Field(max_length=10_000)
+    op: str = Field(pattern='^(copy|cut|paste)$')
+    # copy/cut: items [start, end); paste: before item `start`.
+    start: int = Field(ge=0)
+    end: int = Field(default=0, ge=0)
+    text: str = Field(default='', max_length=10_000)
+
+
+class EditResponse(BaseModel):
+    ok: bool
+    error: str = ''
+    source: str = ''
+    mdc: str = ''
+    count: int = 0
+    warnings: list[str] = []
+
+
+@app.post('/api/edit', response_model=EditResponse)
+def edit_line(req: EditRequest):
+    r = editing.edit(req.source, req.op, req.start, req.end, req.text)
+    return EditResponse(ok=r.ok, error=r.error, source=r.source, mdc=r.mdc, count=r.count,
+                        warnings=r.warnings)
 
 
 @app.get('/api/health')
