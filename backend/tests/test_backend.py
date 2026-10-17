@@ -410,6 +410,23 @@ def test_pdf_svg_directions(direction):
     assert svg.count('<svg') == 2
 
 
+@pytest.mark.parametrize('direction', ['hlr', 'hrl', 'vlr'])
+def test_pdf_splits_long_lines(monkeypatch, direction):
+    from app import render
+    split = []
+    original_split = render._split_items
+    monkeypatch.setattr(render, '_split_items', lambda *a: (split.append(r := original_split(*a)), r)[1])
+    doc = Document(lines=[Line(source='-'.join(['|B12-i-w-r:a-nfr-f-r'] * 20), direction=direction)])
+    pdf, warnings = render.export_pdf(doc)
+    assert pdf.startswith(b'%PDF')
+    assert len(split[0]) > 1 and any('split into' in w for w in warnings)
+    assert not any('scaled' in w for w in warnings)  # nothing shrunk
+    # Every group is drawn once, and a reference starts the line after a break, never ends one.
+    assert sum(len(c.fragment.groups) for c in split[0]) == 120
+    for chunk in split[0]:
+        assert not chunk.parts or chunk.parts[-1].ref is None
+
+
 def test_invalid_direction_rejected():
     r = client.post('/api/export', json={'format': 'pdf', 'document': {'lines': [{'source': 'A1', 'direction': 'up'}]}})
     assert r.status_code == 422

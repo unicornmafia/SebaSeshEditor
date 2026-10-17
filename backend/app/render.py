@@ -216,6 +216,57 @@ def _layout_pdf_line(canv, hl: HieroLine, fontsize: int):
     return width, height, draw
 
 
+def _line_of(hl: HieroLine, items: list) -> HieroLine:
+    """A line of the given items: top-level groups, and reference labels (str)."""
+    parts: list[hiero.Part] = []
+    run: list = []
+    for item in items:
+        if isinstance(item, str):
+            if run:
+                parts.append(hiero.Part(fragment=Fragment(run)))
+                run = []
+            parts.append(hiero.Part(ref=item))
+        else:
+            run.append(item)
+    if run:
+        parts.append(hiero.Part(fragment=Fragment(run)))
+    has_refs = any(p.ref is not None for p in parts)
+    return HieroLine(Fragment([i for i in items if not isinstance(i, str)]), hl.options, parts if has_refs else [])
+
+
+def _split_items(canv, hl: HieroLine, fontsize: int, limit: float) -> list[HieroLine]:
+    """Splits a line between top-level groups into lines no longer than `limit` (the width of a
+    horizontal line, the height of a column). A reference stays with the groups after it."""
+    vertical = hl.options.v()
+
+    def length(items):
+        w, h, _ = _layout_pdf_line(canv, _line_of(hl, items), fontsize)
+        return h if vertical else w
+
+    items: list = []
+    for part in hl.parts or [hiero.Part(fragment=hl.fragment)]:
+        if part.ref is not None:
+            items.append(part.ref)
+        else:
+            items.extend(part.fragment.groups)
+    if length(items) <= limit:
+        return [hl]
+    chunks: list[list] = []
+    current: list = []
+    for item in items:
+        if current and any(not isinstance(i, str) for i in current) and length(current + [item]) > limit:
+            # Line references at the end mark the start of what follows: carry them over.
+            carried = []
+            while len(current) > 1 and isinstance(current[-1], str):
+                carried.insert(0, current.pop())
+            chunks.append(current)
+            current = carried
+        current.append(item)
+    if current:
+        chunks.append(current)
+    return [_line_of(hl, c) for c in chunks]
+
+
 def export_pdf(doc: Document) -> tuple[bytes, list[str]]:
     warnings: list[str] = []
     buffer = io.BytesIO()
@@ -243,21 +294,27 @@ def export_pdf(doc: Document) -> tuple[bytes, list[str]]:
             if hl is None:
                 continue
             with hiero.HIEROPY_LOCK:
-                w, h, draw = _layout_pdf_line(canv, hl, fontsize)
-                # Long lines (or tall vertical columns) are scaled down to fit the page.
-                scale = min(1.0, avail_w / w, avail_h / h)
-                width, height = w * scale, h * scale
-                ensure_room(height)
-                # Right-to-left lines are set flush right, as in JSesh.
-                x = page_w - PAGE_MARGIN - width if hl.options.rl() else PAGE_MARGIN
-                canv.saveState()
-                canv.translate(x, y - height)
-                canv.scale(scale, scale)
-                draw()
-                canv.restoreState()
-            if scale < 1:
-                warnings.append(f'Line {i}: scaled down to fit the page')
-            y -= height + gap
+                vertical = hl.options.v()
+                chunks = _split_items(canv, hl, fontsize, avail_h if vertical else avail_w)
+                if len(chunks) > 1:
+                    warnings.append(f'Line {i}: split into {len(chunks)} lines to fit the page')
+                for k, chunk in enumerate(chunks):
+                    # Laid out again just before drawing: measuring other chunks moves the groups.
+                    w, h, draw = _layout_pdf_line(canv, chunk, fontsize)
+                    # Only a single group too big for the page is scaled down.
+                    scale = min(1.0, avail_w / w, avail_h / h)
+                    if scale < 1:
+                        warnings.append(f'Line {i}: a group was scaled down to fit the page')
+                    width, height = w * scale, h * scale
+                    ensure_room(height)
+                    # Right-to-left lines are set flush right, as in JSesh.
+                    x = page_w - PAGE_MARGIN - width if hl.options.rl() else PAGE_MARGIN
+                    canv.saveState()
+                    canv.translate(x, y - height)
+                    canv.scale(scale, scale)
+                    draw()
+                    canv.restoreState()
+                    y -= height + (gap if k == len(chunks) - 1 else gap / 2)
         else:
             size = fontsize * TEXT_SCALE
             leading = size * 1.35
