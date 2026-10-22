@@ -540,3 +540,26 @@ def test_cut_inside_a_typed_piece_rewrites_the_line():
 def test_paste_rejects_non_hieroglyphs():
     r = _edit(source='A1', op='paste', start=1, text='i-w-r:')
     assert not r['ok'] and 'Cannot paste' in r['error']
+
+
+def test_sign_list_for_picker():
+    cats = client.get('/api/signs').json()
+    assert [c['id'] for c in cats][:2] == ['A', 'B'] and cats[-1]['id'] == 'Aa'
+    g = next(c for c in cats if c['id'] == 'G')
+    g17 = next(s for s in g['signs'] if s['name'] == 'G17')
+    assert g17['mdc'] == 'G17' and 'm' in g17['readings'] and not g17['extended']
+    r8 = next(s for s in next(c for c in cats if c['id'] == 'R')['signs'] if s['name'] == 'R8')
+    assert 'nTr' in r8['mnemonics']
+    # Every MdC code reads back as its sign.
+    for s in g['signs'][:40]:
+        if s['mdc']:
+            assert hiero.interpret(s['mdc']).unicode == s['char']
+    info = client.get('/api/signs/info', params={'char': g17['char']}).json()['info']
+    assert info.startswith('<ul>') and '<i>m</i>' in info
+    assert client.get('/api/signs/info', params={'char': 'ab'}).status_code == 400
+
+
+def test_sign_info_keeps_only_list_tags():
+    from app.signs import _clean_info
+    assert _clean_info('<ul><li><b>Det.</b> <i>s</i> <script>x</script></li></ul>') == \
+        '<ul><li><b>Det.</b> <i>s</i> &lt;script&gt;x&lt;/script&gt;</li></ul>'

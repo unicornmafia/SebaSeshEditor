@@ -885,3 +885,134 @@ body {
   height: 1px;
   opacity: 0;
 }
+
+/* ------------------------------------------------------------ hieroglyph picker (right drawer) */
+
+.drawer-right .drawer-handle {
+  right: auto;
+  left: -18px;
+  border: 1px solid var(--seba-steel);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+}
+
+.glyph-picker {
+  flex: 0 0 auto;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: white;
+  border-left: 1px solid #dee2e6;
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #dee2e6;
+}
+.picker-head .form-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.picker-extended {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: #6c757d;
+  cursor: pointer;
+  user-select: none;
+}
+
+.picker-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  grid-auto-rows: 62px;
+  gap: 4px;
+  padding: 8px;
+  align-content: start;
+}
+.picker-message {
+  grid-column: 1 / -1;
+  font-size: 0.85rem;
+}
+.picker-sign {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px 2px;
+  border: 1px solid #e3eaf1;
+  border-radius: 6px;
+  background: white;
+  color: var(--seba-navy);
+  overflow: hidden;
+}
+.picker-sign:hover {
+  background: var(--seba-pale);
+  border-color: var(--seba-sky);
+}
+.picker-sign.chosen {
+  background: var(--seba-active);
+  border-color: var(--seba-blue);
+}
+.picker-glyph {
+  font-family: Hieroglyphic;
+  font-size: 30px;
+  line-height: 40px;
+  height: 40px;
+}
+.picker-name {
+  font-size: 0.66rem;
+  color: #6c757d;
+  line-height: 1.1;
+}
+
+.picker-detail {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  border-top: 1px solid #dee2e6;
+  background: var(--seba-pale);
+  padding: 8px 10px;
+}
+.picker-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.picker-detail-glyph {
+  font-family: Hieroglyphic;
+  font-size: 48px;
+  line-height: 1;
+}
+.picker-detail-name {
+  font-weight: 600;
+  color: var(--seba-navy);
+}
+.picker-readings {
+  margin-top: 6px;
+  font-family: Transliteration, serif;
+  font-size: 1.05rem;
+}
+.picker-info {
+  margin-top: 4px;
+  font-size: 0.82rem;
+}
+.picker-info ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+.picker-info i {
+  font-family: Transliteration, serif;
+}
+
+@media (max-width: 767.98px) {
+  .glyph-picker { width: 220px; }
+}

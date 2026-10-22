@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import documents, editing, hiero, render
+from . import documents, editing, hiero, render, signs
 from .documents import Document, Line
 
 app = FastAPI(title='SebaSesh')
@@ -93,6 +93,31 @@ def edit_line(req: EditRequest):
     r = editing.edit(req.source, req.op, req.start, req.end, req.text)
     return EditResponse(ok=r.ok, error=r.error, source=r.source, mdc=r.mdc, count=r.count,
                         warnings=r.warnings)
+
+
+@app.get('/api/signs')
+def sign_list():
+    """The hieroglyph picker's signs, by Gardiner category (the same for every request)."""
+    return Response(content=_sign_list_json(), media_type='application/json',
+                     headers={'Cache-Control': 'public, max-age=86400'})
+
+
+_sign_json: bytes | None = None
+
+
+def _sign_list_json() -> bytes:
+    global _sign_json
+    if _sign_json is None:
+        _sign_json = json.dumps(signs.sign_list(), ensure_ascii=False).encode()
+    return _sign_json
+
+
+@app.get('/api/signs/info')
+def sign_info(char: str):
+    """A sign's uses and readings, as a short HTML list (empty if none are known)."""
+    if len(char) != 1:
+        raise HTTPException(400, 'One sign expected')
+    return {'info': signs.sign_info(char)}
 
 
 @app.get('/api/health')

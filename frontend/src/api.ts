@@ -79,3 +79,37 @@ export async function importFile(file: File, format?: ImportFormat): Promise<Imp
   }
   return res.json();
 }
+
+/** A sign in the hieroglyph picker. */
+export interface Sign {
+  /** Unicode (Gardiner) name, e.g. G17 or A5a. */
+  name: string;
+  char: string;
+  /** One of the signs added in Unicode 16 (Egyptian Hieroglyphs Extended-A). */
+  extended: boolean;
+  /** The MdC code for the sign, or null if MdC has none (it is then inserted as Unicode). */
+  mdc: string | null;
+  /** Other MdC codes for it, e.g. nTr. */
+  mnemonics: string[];
+  /** Its transliterations, e.g. ['m']. */
+  readings: string[];
+}
+
+export interface SignCategory {
+  id: string;
+  description: string;
+  signs: Sign[];
+}
+
+export async function fetchSigns(): Promise<SignCategory[]> {
+  const res = await fetch('/api/signs');
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+/** A sign's uses and readings, as a short HTML list (empty if none are known). */
+export async function fetchSignInfo(char: string, signal?: AbortSignal): Promise<string> {
+  const res = await fetch(`/api/signs/info?char=${encodeURIComponent(char)}`, { signal });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return ((await res.json()) as { info: string }).info;
+}

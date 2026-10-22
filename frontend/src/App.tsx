@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import * as api from './api';
+import type { Sign } from './api';
 import AboutDialog from './components/AboutDialog';
 import DisplayBox from './components/DisplayBox';
 import ImportDialog from './components/ImportDialog';
 import InputBar from './components/InputBar';
 import Notices, { type Notice } from './components/Notices';
 import Sidebar from './components/Sidebar';
+import GlyphPicker from './components/GlyphPicker';
 import LoadingOverlay from './components/LoadingOverlay';
 import { asciiToUnicode } from './translit';
 import Toolbar, { stepFontsize } from './components/Toolbar';
@@ -26,6 +28,7 @@ import {
 } from './types';
 
 const SIDEBAR_KEY = 'sebasesh.sidebarOpen';
+const PICKER_KEY = 'sebasesh.pickerOpen';
 const HIERO_FONT_KEY = 'sebasesh.hieroFont';
 const HIERO_OPTIONS_KEY = 'sebasesh.hieroOptionsOpen';
 const DEFAULT_FONTSIZE = 48;
@@ -188,6 +191,14 @@ export default function App() {
   // Lines selected in the main window; font size changes apply to these (or to everything when empty).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
+  // The hieroglyph picker on the right: closed unless the user opened it.
+  const [pickerOpen, setPickerOpen] = useState(() => {
+    try {
+      return localStorage.getItem(PICKER_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [hieroFont, setHieroFont] = useState<HieroFont>(loadHieroFont);
   const [aboutOpen, setAboutOpen] = useState(false);
   // Glyph font and orientation/direction controls: collapsed unless the user opened them.
@@ -335,6 +346,14 @@ export default function App() {
       // not essential
     }
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PICKER_KEY, String(pickerOpen));
+    } catch {
+      // not essential
+    }
+  }, [pickerOpen]);
 
   useEffect(() => {
     try {
@@ -1039,6 +1058,53 @@ export default function App() {
     }
   };
 
+  // ------------------------------------------------------------ hieroglyph picker
+
+  /**
+   * Puts a sign from the picker at the cursor: at the glyph cursor if there is one (replacing
+   * selected groups), else at the caret of the input line, as MdC in an MdC line (with '-'
+   * where needed) or as Unicode in a Unicode line. A non-hieroglyphic line gets a new
+   * hieroglyphic line after it for the sign.
+   */
+  const insertSign = (sign: Sign) => {
+    const code = sign.mdc ?? sign.char;
+    const c = glyphCursorRef.current;
+    if (c && c.lineId === active.id && active.mode === 'hiero') {
+      glyphEdit('paste', code);
+      return;
+    }
+    if (active.mode !== 'hiero') {
+      const { fontsize: size, direction } = active;
+      const line = makeLine('hiero', code, size, direction);
+      recordEdit('newline');
+      setLines((ls) => [...ls.slice(0, activeIndex + 1), line, ...ls.slice(activeIndex + 1)]);
+      renderOne(line.id, code);
+      setActiveIndex(activeIndex + 1);
+      return;
+    }
+    const format = active.source.trim() ? active.result?.sourceFormat ?? 'mdc' : 'empty';
+    if (format === 'unicode') {
+      insertAtCaret(sign.char);
+      return;
+    }
+    const el = inputRef.current;
+    const value = active.source;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    // Signs follow each other with '-', unless something that joins signs is already there.
+    const text = (before && !/[-:*&(\s]$/.test(before) ? '-' : '') + code
+      + (after && !/^[-:*&)\s!]/.test(after) ? '-' : '');
+    insertAtCaret(text);
+  };
+
+  /** Gives the focus back to where it was before using the picker's category list. */
+  const pickerDone = () => {
+    if (glyphCursorRef.current) holdGlyphFocus();
+    else focusInput('keep');
+  };
+
   // ------------------------------------------------------------ search
 
   // The query read as MdC (or Unicode): its signs, unless it is not valid MdC or names unknown signs.
@@ -1197,13 +1263,27 @@ export default function App() {
             <textarea ref={glyphClipboard} className="glyph-clipboard" aria-hidden="true" tabIndex={-1}
               onCopy={onGlyphClipboard} onCut={onGlyphClipboard} onPaste={onGlyphClipboard} onKeyDown={onGlyphKey}
               onChange={() => undefined}
-              onBlur={() => { if (document.hasFocus()) setGlyphCursor(null); }} />
+              onBlur={(e) => {
+                // The picker's category list takes the focus for a moment and gives it back.
+                if ((e.relatedTarget as Element | null)?.closest('.glyph-picker')) return;
+                if (document.hasFocus()) setGlyphCursor(null);
+              }} />
           </main>
           {findOpen && (
             <FindBar text={findText} scope={findScope} count={matchIndexes.length} current={currentMatch}
               focusTick={findTick} onText={setFindText} onScope={setFindScope} onStep={stepMatch} onClose={closeFind} />
           )}
           {loading && <LoadingOverlay message={loading} />}
+        </div>
+        <div className="drawer drawer-right">
+          {/* Tab on the drawer's edge that opens/closes the hieroglyph picker. */}
+          <button type="button" className="drawer-handle" onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setPickerOpen((o) => !o)} aria-expanded={pickerOpen}
+            title={pickerOpen ? 'Hide hieroglyph picker' : 'Show hieroglyph picker'}
+            aria-label={pickerOpen ? 'Hide hieroglyph picker' : 'Show hieroglyph picker'}>
+            <i className={`fa-solid ${pickerOpen ? 'fa-angles-right' : 'fa-angles-left'}`} />
+          </button>
+          {pickerOpen && <GlyphPicker onInsert={insertSign} onDone={pickerDone} />}
         </div>
       </div>
 
