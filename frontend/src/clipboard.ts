@@ -28,6 +28,9 @@ async function svgToPng(svg: Blob): Promise<Blob> {
     canvas.width = Math.ceil(img.naturalWidth * PNG_SCALE);
     canvas.height = Math.ceil(img.naturalHeight * PNG_SCALE);
     const ctx = canvas.getContext('2d')!;
+    // The SVG has no background (it is placed over other content); the PNG gets a white one.
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.scale(PNG_SCALE, PNG_SCALE);
     ctx.drawImage(img, 0, 0);
     return await new Promise<Blob>((resolve, reject) =>

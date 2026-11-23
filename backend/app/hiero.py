@@ -286,7 +286,10 @@ def _interpret_mdc(text: str) -> Interpretation:
 def _convert_mdc(text: str) -> tuple[list[Fragment], list[str] | None]:
     """hieropy's MdC conversion; errors is None if the result has unknown signs (placeholders)."""
     converter = MdcUniConverter()
-    fragments = converter.convert(text)
+    try:
+        fragments = converter.convert(text)
+    except Exception as err:  # hieropy can fail on odd input, e.g. '(r=f??)'
+        return [], [f'Cannot parse this MdC ({type(err).__name__})']
     if any(PLACEHOLDER in str(f) for f in fragments):
         return fragments, None
     return fragments, converter.errors

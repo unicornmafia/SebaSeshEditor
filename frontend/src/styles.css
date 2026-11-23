@@ -1016,3 +1016,68 @@ body {
 @media (max-width: 767.98px) {
   .glyph-picker { width: 220px; }
 }
+
+.pdf-size {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  white-space: nowrap;
+}
+.pdf-size .form-select {
+  width: 5.5em;
+}
+
+/* ------------------------------------------------------------ moving lines by dragging their number */
+
+.line-number {
+  cursor: grab;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  touch-action: none;
+}
+.display-box.dragging-lines,
+.display-box.dragging-lines .line-number {
+  cursor: grabbing;
+}
+.display-line.dragging {
+  opacity: 0.45;
+}
+.display-line.drop-before {
+  box-shadow: inset 0 3px 0 var(--seba-blue);
+}
+.display-line.drop-after {
+  box-shadow: inset 0 -3px 0 var(--seba-blue);
+}
+
+/* ------------------------------------------------------------ Latin lines edited in place */
+
+.inline-text-editor {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  white-space: pre-wrap;
+}
+
+.picker-search {
+  position: relative;
+  padding: 8px 8px 0;
+}
+.picker-search i {
+  position: absolute;
+  left: 18px;
+  top: 16px;
+  font-size: 0.75rem;
+  color: #9aa5b1;
+}
+.picker-search .form-control {
+  padding-left: 28px;
+}

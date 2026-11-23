@@ -9,6 +9,7 @@ one document and the fonts used are subsetted and embedded so the file is portab
 import base64
 import importlib.resources as resources
 import io
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -26,7 +27,7 @@ from reportlab.pdfgen import canvas as rl_canvas
 
 from . import hiero
 from .documents import Document, size_of, text_of
-from .outline import outline_hieropy_svg, outline_text
+from .outline import SVG_NS, outline_hieropy_svg, outline_text
 
 FONT_DIR = Path(__file__).resolve().parent.parent / 'fonts'
 
@@ -267,8 +268,11 @@ def _split_items(canv, hl: HieroLine, fontsize: int, limit: float) -> list[Hiero
     return [_line_of(hl, c) for c in chunks]
 
 
-def export_pdf(doc: Document) -> tuple[bytes, list[str]]:
+def export_pdf(doc: Document, fontsize: int | None = None) -> tuple[bytes, list[str]]:
+    """The document as an A4 PDF. With `fontsize`, the document's size is set to it and every
+    line's own size scaled along (a line twice the document's size stays twice as big)."""
     warnings: list[str] = []
+    scale_sizes = fontsize / doc.fontsize if fontsize else 1.0
     buffer = io.BytesIO()
     page_w, page_h = A4
     canv = rl_canvas.Canvas(buffer, pagesize=A4)
@@ -284,7 +288,7 @@ def export_pdf(doc: Document) -> tuple[bytes, list[str]]:
             y = page_h - PAGE_MARGIN
 
     for i, line in enumerate(doc.lines, 1):
-        fontsize = size_of(line, doc)
+        fontsize = max(4, round(size_of(line, doc) * scale_sizes))
         gap = fontsize * LINE_GAP
         if line.mode == 'hiero':
             if not line.source.strip():
@@ -358,6 +362,55 @@ def _font_face(family: str, path: Path, chars: set[str]) -> str:
     return f"@font-face {{ font-family: '{family}'; src: url(data:font/ttf;base64,{data}) format('truetype'); }}"
 
 
+def _flatten_hieropy_svg(svg: str) -> str:
+    """hieropy's SVG with every sign as its own <text> at absolute coordinates.
+
+    hieropy places most signs as <tspan>s positioned by x/y plus dx/dy, and interleaves hidden
+    tspans with the format controls (for copying). Browsers honour that, but many programs
+    (Illustrator, Office, some viewers) ignore dx/dy or show the hidden text, which piles the
+    signs on top of each other. Signs with a transform (scaled, mirrored, rotated) are already
+    <text> elements of their own and are kept, without the browser-only style.
+    """
+    text_tag = f'{{{SVG_NS}}}text'
+    root = ET.fromstring(svg)
+    out = ET.Element(root.tag, {k: v for k, v in root.attrib.items() if k in ('width', 'height', 'viewBox')})
+
+    def num(el, attr):
+        try:
+            return float(el.get(attr, '0'))
+        except ValueError:
+            return 0.0
+
+    def sign(ch, x, y, attrs):
+        el = ET.SubElement(out, text_tag, {k: v for k, v in attrs.items() if k in ('fill', 'font-family', 'font-size', 'transform')})
+        el.set('x', f'{x:g}')
+        el.set('y', f'{y:g}')
+        el.text = ch
+
+    for child in root:
+        if child.tag != text_tag:
+            continue  # <defs/>
+        if (child.text or '').strip() and num(child, 'font-size'):
+            sign(child.text.strip(), num(child, 'x'), num(child, 'y'), child.attrib)
+        for span in child:
+            text = (span.text or '').strip()
+            if not text or not num(span, 'font-size'):
+                continue  # hidden copy text
+            # The <text> around the tspans may mirror them all (right-to-left lines): keep that.
+            attrs = {**child.attrib, **span.attrib}
+            sign(text, num(span, 'x') + num(span, 'dx'), num(span, 'y') + num(span, 'dy'), attrs)
+    return ET.tostring(out, encoding='unicode')
+
+
+def _as_group(svg: str, x: float, y: float) -> str:
+    """An <svg> drawing as a <g> placed at (x, y), which every SVG program understands."""
+    root = ET.fromstring(svg)
+    group = ET.Element(f'{{{SVG_NS}}}g', {'transform': f'translate({x:g},{y:g})'})
+    group.extend(list(root))
+    # It goes inside the document's <svg>, which declares the namespace.
+    return ET.tostring(group, encoding='unicode').replace(f' xmlns="{SVG_NS}"', '', 1)
+
+
 def export_svg(doc: Document, embed_fonts: bool = True, outline: bool = False) -> tuple[str, list[str]]:
     """One SVG for the document. With `outline`, all text becomes glyph outlines (no fonts needed)."""
     warnings: list[str] = []
@@ -381,6 +434,7 @@ def export_svg(doc: Document, embed_fonts: bool = True, outline: bool = False) -
             if hl is None or not hl.fragment.groups:
                 continue
             svg, w, h = hiero.render_svg(hl.fragment, fontsize, transparent=True, direction=line.direction)
+            svg = _flatten_hieropy_svg(svg)
             if outline:
                 svg = outline_hieropy_svg(svg, hiero_font_path())
             else:
@@ -388,7 +442,7 @@ def export_svg(doc: Document, embed_fonts: bool = True, outline: bool = False) -
             if hl.options.rl():
                 body.append((svg, w, y))
             else:
-                body.append(svg.replace('<svg ', f'<svg x="{margin:g}" y="{y:g}" ', 1))
+                body.append(_as_group(svg, margin, y))
             width = max(width, w)
             y += h + gap
         else:
@@ -409,8 +463,7 @@ def export_svg(doc: Document, embed_fonts: bool = True, outline: bool = False) -
 
     total_w = width + 2 * margin
     total_h = y - gap + margin
-    body = [part if isinstance(part, str) else
-            part[0].replace('<svg ', f'<svg x="{total_w - margin - part[1]:g}" y="{part[2]:g}" ', 1)
+    body = [part if isinstance(part, str) else _as_group(part[0], total_w - margin - part[1], part[2])
             for part in body]
     style = ''
     if embed_fonts and not outline:
@@ -422,6 +475,5 @@ def export_svg(doc: Document, embed_fonts: bool = True, outline: bool = False) -
         if faces:
             style = '<style>' + '\n'.join(faces) + '</style>'
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{total_w:g}" height="{total_h:g}" '
-           f'viewBox="0 0 {total_w:g} {total_h:g}">{style}'
-           f'<rect width="100%" height="100%" fill="white"/>' + ''.join(body) + '</svg>')
+           f'viewBox="0 0 {total_w:g} {total_h:g}">{style}' + ''.join(body) + '</svg>')
     return svg, warnings

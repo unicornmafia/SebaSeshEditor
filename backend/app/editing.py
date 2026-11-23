@@ -72,22 +72,22 @@ def to_unicode(items: list[Item]) -> str:
     return ''.join(f'|{run}-' if isinstance(run, str) else str(run) for run in _runs(items)).rstrip('-')
 
 
-def _segments(source: str) -> list[str]:
-    """The source's top-level pieces: split at '-' and spaces outside (), <> and references."""
-    pieces: list[str] = []
-    buf: list[str] = []
+def _segment_spans(source: str) -> list[tuple[int, int]]:
+    """Where the source's top-level pieces are: split at '-' and spaces outside (), <> and references."""
+    spans: list[tuple[int, int]] = []
+    start = None  # of the piece being read
     depth = 0
     i = 0
     while i < len(source):
         c = source[i]
         if c == '|' and depth == 0:  # a reference, up to the next '-' or '!' (it may contain spaces)
-            if buf:
-                pieces.append(''.join(buf))
-                buf = []
+            if start is not None:
+                spans.append((start, i))
+                start = None
             j = i + 1
             while j < len(source) and source[j] not in '-!|':
                 j += 1
-            pieces.append(source[i:j].strip())
+            spans.append((i, i + len(source[i:j].rstrip())))
             i = j
             continue
         if c in '(<':
@@ -95,15 +95,19 @@ def _segments(source: str) -> list[str]:
         elif c in ')>' and depth:
             depth -= 1
         if depth == 0 and (c == '-' or c.isspace()):
-            if buf:
-                pieces.append(''.join(buf))
-                buf = []
-        else:
-            buf.append(c)
+            if start is not None:
+                spans.append((start, i))
+                start = None
+        elif start is None:
+            start = i
         i += 1
-    if buf:
-        pieces.append(''.join(buf))
-    return pieces
+    if start is not None:
+        spans.append((start, len(source)))
+    return spans
+
+
+def _segments(source: str) -> list[str]:
+    return [source[a:b] for a, b in _segment_spans(source)]
 
 
 def _piece_counts(pieces: list[str], total: int) -> list[int] | None:
@@ -155,6 +159,8 @@ class EditResult:
     mdc: str = ''
     # For paste: how many items were inserted.
     count: int = 0
+    # For locate: where in the source to type for the position, or -1 if it cannot be told.
+    offset: int = -1
     warnings: list[str] = field(default_factory=list)
 
 
@@ -168,6 +174,11 @@ def edit(source: str, op: str, start: int = 0, end: int = 0, text: str = '') -> 
     as_mdc = interp.source_format in ('mdc', 'empty')
     pieces = _segments(source.strip()) if as_mdc else []
     counts = _piece_counts(pieces, len(items)) if as_mdc else None
+
+    if op == 'locate':
+        if not 0 <= start <= len(items):
+            return EditResult(False, error='Invalid position')
+        return EditResult(True, source=source, offset=_locate(source, items, start, as_mdc, counts))
 
     if op in ('copy', 'cut'):
         if not 0 <= start < end <= len(items):
@@ -203,3 +214,29 @@ def edit(source: str, op: str, start: int = 0, end: int = 0, text: str = '') -> 
         return EditResult(True, source=to_mdc(combined, warnings) if as_mdc else to_unicode(combined),
                           count=len(new_items), warnings=warnings)
     return EditResult(False, error=f'Unknown operation {op}')
+
+
+def _locate(source: str, items: list[Item], at: int, as_mdc: bool, counts: list[int] | None) -> int:
+    """The offset in `source` where text typed at item position `at` goes: before the piece that
+    starts there, or after the last one; -1 when the position falls inside a piece."""
+    stripped = source.strip()
+    lead = len(source) - len(source.lstrip())
+    if not stripped:
+        return len(source)
+    if as_mdc:
+        spans = _segment_spans(stripped)
+        if counts is None:
+            return -1
+        k = _insert_index(counts, at)
+        if k is None:
+            return -1
+        if k < len(spans):
+            return lead + spans[k][0]
+        # At the end: after the last piece with signs (before a closing '-!' or spaces).
+        last = max((j for j, n in enumerate(counts) if n), default=len(spans) - 1)
+        return lead + spans[last][1]
+    # Unicode: each item's encoding in turn, when the line is just that.
+    texts = [item_unicode(i) if i.ref is None else None for i in items]
+    if None in texts or ''.join(texts) != stripped:
+        return lead + len(stripped) if at == len(items) else (lead if at == 0 else -1)
+    return lead + len(''.join(texts[:at]))

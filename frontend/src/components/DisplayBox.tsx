@@ -1,4 +1,4 @@
-import { Fragment, forwardRef, useEffect, useRef } from 'react';
+import { Fragment, forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { splitMatches } from '../search';
 import { asciiToUnicode } from '../translit';
 import { HIERO_FONTS, type Direction, type GlyphCursor, type HieroFont, type Line, type RenderPart } from '../types';
@@ -26,7 +26,20 @@ interface Props {
   onItemEnter: (index: number) => void;
   /** Pointer pressed in the gap before item `at`. */
   onGapDown: (at: number) => void;
+  /** Lines dragged by their number: move them (the dragged line, or all selected lines with it) before line `at`. */
+  onReorder: (ids: string[], at: number) => void;
+  /** The current line edited in place when it is Latin text (plain, bold or italic). */
+  textEditorRef: React.RefObject<HTMLTextAreaElement | null>;
+  onTextChange: (value: string) => void;
+  onTextKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onTextPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 }
+
+/** Lines whose text is edited in place in the main window (the text shown is the text typed). */
+export const EDIT_IN_PLACE = new Set(['latin', 'bold', 'italic']);
+
+/** Pointer travel before pressing a line number becomes a drag. */
+const DRAG_THRESHOLD = 4;
 
 /** Handlers for the clickable glyphs of the current line. */
 interface GlyphHandlers {
@@ -45,17 +58,86 @@ export const TEXT_SCALE = 0.5;
 /** The main window. Lines carry data-line-id so a text selection can be mapped back to lines. */
 const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
   { lines, activeIndex, selectedIds, fontsize, hieroFont, onLineClick, onMove, onDelete, onCopy, matchIds, highlight = '',
-    glyphCursor, onItemDown, onItemEnter, onGapDown },
+    glyphCursor, onItemDown, onItemEnter, onGapDown, onReorder, textEditorRef, onTextChange, onTextKeyDown, onTextPaste },
   ref,
 ) {
   const activeRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  // Dragging lines by their number: which lines, and where they would go (before line `at`).
+  const [drag, setDragState] = useState<{ ids: Set<string>; at: number } | null>(null);
+  const dragRef = useRef(drag);
+  const setDrag = (d: typeof drag) => {
+    dragRef.current = d;
+    setDragState(d);
+  };
+  const press = useRef<{ index: number; y: number; moved: boolean } | null>(null);
+  const justDragged = useRef(false);
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex]);
 
+  /** Where dropping at height `y` puts the lines: before the first line whose middle is below it. */
+  const dropIndex = (y: number) => {
+    const els = [...(boxRef.current?.querySelectorAll<HTMLElement>(':scope > [data-line-id]') ?? [])];
+    const k = els.findIndex((el) => {
+      const r = el.getBoundingClientRect();
+      return y < r.top + r.height / 2;
+    });
+    return k < 0 ? els.length : k;
+  };
+
+  /** Scrolls the main window while dragging near its top or bottom edge. */
+  const autoScroll = (y: number) => {
+    const scroller = boxRef.current?.closest('.editor-center');
+    if (!scroller) return;
+    const r = scroller.getBoundingClientRect();
+    if (y < r.top + 40) scroller.scrollBy(0, -20);
+    else if (y > r.bottom - 40) scroller.scrollBy(0, 20);
+  };
+
+  const dragHandlers = (i: number) => ({
+    onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
+      if (e.button !== 0 || e.shiftKey || e.metaKey || e.ctrlKey) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      press.current = { index: i, y: e.clientY, moved: false };
+    },
+    onPointerMove: (e: React.PointerEvent<HTMLElement>) => {
+      const p = press.current;
+      if (!p) return;
+      if (!p.moved && Math.abs(e.clientY - p.y) < DRAG_THRESHOLD) return;
+      if (!p.moved) {
+        p.moved = true;
+        document.getSelection()?.removeAllRanges();
+      }
+      const id = lines[p.index].id;
+      // A selected line takes the other selected lines along.
+      const ids = selectedIds.has(id) && selectedIds.size > 1 ? new Set(selectedIds) : new Set([id]);
+      autoScroll(e.clientY);
+      setDrag({ ids, at: dropIndex(e.clientY) });
+    },
+    onPointerUp: () => {
+      const p = press.current;
+      press.current = null;
+      if (!p?.moved) return;
+      justDragged.current = true;
+      const d = dragRef.current;
+      setDrag(null);
+      if (d) onReorder([...d.ids], d.at);
+    },
+    onPointerCancel: () => {
+      press.current = null;
+      setDrag(null);
+    },
+  });
+
   return (
-    <div className="display-box" role="list" ref={ref}>
+    <div className={`display-box${drag ? ' dragging-lines' : ''}`} role="list"
+      ref={(el) => {
+        boxRef.current = el;
+        if (typeof ref === 'function') ref(el);
+        else if (ref) ref.current = el;
+      }}>
       {lines.map((line, i) => {
         const active = i === activeIndex;
         const selected = selectedIds.has(line.id);
@@ -65,6 +147,9 @@ const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
         if (selected) classes.push('selected');
         if (stale) classes.push('stale');
         if (matchIds?.has(line.id)) classes.push('search-match');
+        if (drag?.ids.has(line.id)) classes.push('dragging');
+        if (drag && drag.at === i) classes.push('drop-before');
+        if (drag && drag.at === lines.length && i === lines.length - 1) classes.push('drop-after');
         // Right-to-left hieroglyphic lines are set flush right, as in JSesh.
         if (line.mode === 'hiero' && line.direction?.endsWith('rl')) classes.push('rtl');
         return (
@@ -74,13 +159,33 @@ const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
             role="listitem"
             data-line-id={line.id}
             className={classes.join(' ')}
-            onClick={(e) => onLineClick(i, e)}
+            onClick={(e) => {
+              if (justDragged.current) {
+                justDragged.current = false;
+                return;
+              }
+              onLineClick(i, e);
+            }}
+            // On a Mac, Ctrl-click opens the context menu instead of clicking: it selects lines too.
+            onContextMenu={(e) => {
+              if (!e.ctrlKey) return;
+              e.preventDefault();
+              onLineClick(i, e);
+            }}
           >
-            <span className="line-number" title={stale ? `Cannot be rendered: ${line.result?.error}` : undefined}>{i + 1}</span>
+            <span className="line-number" {...dragHandlers(i)}
+              title={stale ? `Cannot be rendered: ${line.result?.error}` : 'Drag to move the line (with the other selected lines)'}>
+              {i + 1}
+            </span>
             <div className="line-content">
-              <LineContent line={line} fontsize={line.fontsize ?? fontsize} hieroFont={hieroFont}
-                highlight={matchIds?.has(line.id) ? highlight : ''}
-                glyphs={active ? { cursor: glyphCursor?.lineId === line.id ? glyphCursor : null, onItemDown, onItemEnter, onGapDown } : null} />
+              {active && EDIT_IN_PLACE.has(line.mode) ? (
+                <TextEditor line={line} fontsize={line.fontsize ?? fontsize} editorRef={textEditorRef}
+                  onChange={onTextChange} onKeyDown={onTextKeyDown} onPaste={onTextPaste} />
+              ) : (
+                <LineContent line={line} fontsize={line.fontsize ?? fontsize} hieroFont={hieroFont}
+                  highlight={matchIds?.has(line.id) ? highlight : ''}
+                  glyphs={active ? { cursor: glyphCursor?.lineId === line.id ? glyphCursor : null, onItemDown, onItemEnter, onGapDown } : null} />
+              )}
             </div>
             <div className="line-actions" onClick={(e) => e.stopPropagation()}>
               <button type="button" className="btn btn-sm btn-link" onClick={() => onCopy(i)}
@@ -143,6 +248,58 @@ function LineContent({ line, fontsize, hieroFont, highlight, glyphs }: {
   );
 }
 
+/** The current Latin line, edited where it is shown (the input bar edits the same text). */
+function TextEditor({ line, fontsize, editorRef, onChange, onKeyDown, onPaste }: {
+  line: Line; fontsize: number; editorRef: Props['textEditorRef'];
+  onChange: Props['onTextChange']; onKeyDown: Props['onTextKeyDown']; onPaste: Props['onTextPaste'];
+}) {
+  // As tall as its text, so long lines wrap as they do when not being edited.
+  useLayoutEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.style.height = '0';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [line.source, fontsize, editorRef]);
+  return (
+    <textarea ref={editorRef} className={`text-line text-${line.mode} inline-text-editor`} rows={1}
+      style={{ fontSize: fontsize * TEXT_SCALE }} value={line.source} spellCheck
+      aria-label="Line text" onChange={(e) => onChange(e.target.value.replace(/\r?\n/g, ' '))}
+      onKeyDown={onKeyDown} onPaste={onPaste} onClick={(e) => e.stopPropagation()} />
+  );
+}
+
+/**
+ * Offset of the character at (x, y) in the text of `container` (where the click is in a text
+ * line), or null if the point is not in its text.
+ */
+export function textOffsetAt(container: HTMLElement, x: number, y: number): number | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  let node: Node | null = null;
+  let offset = 0;
+  const pos = doc.caretPositionFromPoint?.(x, y);
+  if (pos) {
+    node = pos.offsetNode;
+    offset = pos.offset;
+  } else {
+    const range = document.caretRangeFromPoint?.(x, y);
+    if (range) {
+      node = range.startContainer;
+      offset = range.startOffset;
+    }
+  }
+  if (!node || !container.contains(node)) return null;
+  // Text before the point, across the pieces the text is split into (search marks).
+  let total = 0;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+    if (t === node) return total + offset;
+    total += t.textContent?.length ?? 0;
+  }
+  return null;
+}
+
 function RefMark({ label, fontsize }: { label: string; fontsize: number }) {
   return (
     <span className="line-ref" style={{ fontSize: fontsize * REF_SCALE }}>
@@ -166,9 +323,12 @@ function GlyphItems({ items, fontsize, hieroFont, direction, cursor, onItemDown,
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   // The focus stays where the editor put it (see App), rather than moving to the page.
   const keepFocus = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
+  // Ctrl/Cmd-clicks select whole lines: those are left to the line.
+  const lineClick = (e: React.MouseEvent | React.PointerEvent) => e.metaKey || e.ctrlKey;
   const gap = (at: number) => (
     <span className={`glyph-gap${caret === at ? ' caret' : ''}`} title="Paste here (⌘V)"
-      onPointerDown={(e) => { stop(e); onGapDown(at); }} onMouseDown={keepFocus} onClick={stop} />
+      onPointerDown={(e) => { if (lineClick(e)) return; stop(e); onGapDown(at); }}
+      onMouseDown={(e) => { if (!lineClick(e)) keepFocus(e); }} onClick={(e) => { if (!lineClick(e)) stop(e); }} />
   );
   return (
     <span className={`ref-line ref-line-${direction} glyph-items`}>
@@ -176,8 +336,9 @@ function GlyphItems({ items, fontsize, hieroFont, direction, cursor, onItemDown,
         <Fragment key={k}>
           {gap(k)}
           <span className={`glyph-item${k >= from && k <= to ? ' selected' : ''}`}
-            onPointerDown={(e) => { stop(e); onItemDown(k, e.shiftKey); }} onMouseDown={keepFocus}
-            onPointerEnter={(e) => { if (e.buttons & 1) onItemEnter(k); }} onClick={stop}>
+            onPointerDown={(e) => { if (lineClick(e)) return; stop(e); onItemDown(k, e.shiftKey); }}
+            onMouseDown={(e) => { if (!lineClick(e)) keepFocus(e); }}
+            onPointerEnter={(e) => { if (e.buttons & 1) onItemEnter(k); }} onClick={(e) => { if (!lineClick(e)) stop(e); }}>
             {item.ref !== null
               ? <RefMark label={item.ref} fontsize={fontsize} />
               : <Glyphs unicode={item.unicode ?? ''} fontsize={fontsize} hieroFont={hieroFont} direction={direction} />}

@@ -28,11 +28,16 @@ export interface EditResult {
   mdc: string;
   /** paste: number of items inserted. */
   count: number;
+  /** locate: where in the source to type for the position (-1 if it cannot be told). */
+  offset: number;
   warnings: string[];
 }
 
-/** Copies or cuts items [start, end) of a hieroglyphic line, or pastes `text` before item `start`. */
-export function editLine(source: string, op: 'copy' | 'cut' | 'paste', start: number, end = 0, text = ''): Promise<EditResult> {
+/**
+ * Copies or cuts items [start, end) of a hieroglyphic line, pastes `text` before item `start`,
+ * or (locate) finds where in the source text typed before item `start` goes.
+ */
+export function editLine(source: string, op: 'copy' | 'cut' | 'paste' | 'locate', start: number, end = 0, text = ''): Promise<EditResult> {
   return postJson('/api/edit', { source, op, start, end, text });
 }
 
@@ -43,12 +48,14 @@ export interface ExportResult {
 }
 
 export async function exportDocument(
-  format: ExportFormat, document: StoredDocument, filename: string, options: { outline?: boolean } = {},
+  format: ExportFormat, document: StoredDocument, filename: string,
+  options: { outline?: boolean; pdfFontsize?: number } = {},
 ): Promise<ExportResult> {
   const res = await fetch('/api/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ format, document, filename, ...options }),
+    body: JSON.stringify({ format, document, filename, outline: options.outline ?? false,
+      ...(options.pdfFontsize ? { pdf_fontsize: options.pdfFontsize } : {}) }),
   });
   if (!res.ok) throw new Error(`Export failed: ${res.status} ${res.statusText}`);
   const disposition = res.headers.get('Content-Disposition') ?? '';

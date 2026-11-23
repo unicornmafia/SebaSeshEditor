@@ -48,6 +48,9 @@ class ExportRequest(BaseModel):
     # SVG only: glyph outlines instead of text with embedded fonts (used for the clipboard,
     # where browsers strip the fonts).
     outline: bool = False
+    # PDF only: the document's hieroglyph size in the PDF (lines with their own size are scaled
+    # along); absent: the sizes in the editor.
+    pdf_fontsize: int | None = Field(default=None, ge=6, le=200)
 
 
 class ImportResult(BaseModel):
@@ -72,8 +75,8 @@ def render_text(text: str) -> RenderResult:
 
 class EditRequest(BaseModel):
     source: str = Field(max_length=10_000)
-    op: str = Field(pattern='^(copy|cut|paste)$')
-    # copy/cut: items [start, end); paste: before item `start`.
+    op: str = Field(pattern='^(copy|cut|paste|locate)$')
+    # copy/cut: items [start, end); paste and locate: before item `start`.
     start: int = Field(ge=0)
     end: int = Field(default=0, ge=0)
     text: str = Field(default='', max_length=10_000)
@@ -85,6 +88,8 @@ class EditResponse(BaseModel):
     source: str = ''
     mdc: str = ''
     count: int = 0
+    # locate: where in the source to type for the position (-1 if it cannot be told).
+    offset: int = -1
     warnings: list[str] = []
 
 
@@ -92,7 +97,7 @@ class EditResponse(BaseModel):
 def edit_line(req: EditRequest):
     r = editing.edit(req.source, req.op, req.start, req.end, req.text)
     return EditResponse(ok=r.ok, error=r.error, source=r.source, mdc=r.mdc, count=r.count,
-                        warnings=r.warnings)
+                        offset=r.offset, warnings=r.warnings)
 
 
 @app.get('/api/signs')
@@ -158,7 +163,7 @@ def export(req: ExportRequest):
         case 'unicode':
             content, warnings = documents.export_unicode(doc)
         case 'pdf':
-            content, warnings = render.export_pdf(doc)
+            content, warnings = render.export_pdf(doc, req.pdf_fontsize)
         case 'svg':
             content, warnings = render.export_svg(doc, outline=req.outline)
     ext, media_type = EXPORTS[req.format]

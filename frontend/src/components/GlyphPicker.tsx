@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchSignInfo, fetchSigns, type Sign, type SignCategory } from '../api';
+import { asciiToUnicode } from '../translit';
 
 const CATEGORY_KEY = 'sebasesh.pickerCategory';
 const EXTENDED_KEY = 'sebasesh.pickerExtended';
@@ -19,6 +20,24 @@ function store(key: string, value: string) {
     // not essential
   }
 }
+
+/**
+ * How well a sign matches a search typed as MdC (lower is better), or null if it does not:
+ * its MdC code or a shortcut (w, nTr) exactly, then a reading exactly (w finds the quail chick
+ * and the coil), then a reading or a name that starts with the search.
+ */
+function matchRank(sign: Sign, query: string, reading: string): number | null {
+  const lower = query.toLowerCase();
+  if (sign.mnemonics.includes(query) || sign.mdc?.toLowerCase() === lower || sign.name.toLowerCase() === lower) return 0;
+  if (sign.readings.includes(reading)) return 1;
+  if (sign.readings.some((r) => r.startsWith(reading))) return 2;
+  // Names only once they have a number (G4 -> G4, G40...), so w is not every W sign.
+  if ((/\d/.test(query) && sign.name.toLowerCase().startsWith(lower)) || sign.mnemonics.some((m) => m.startsWith(query))) return 3;
+  return null;
+}
+
+/** Most signs a search shows. */
+const MAX_RESULTS = 200;
 
 /** The sign list, fetched once per page load. */
 let signList: Promise<SignCategory[]> | null = null;
@@ -41,6 +60,7 @@ export default function GlyphPicker({ onInsert, onDone }: Props) {
   const [categoryId, setCategoryId] = useState(() => load(CATEGORY_KEY) ?? 'A');
   const [extended, setExtended] = useState(() => load(EXTENDED_KEY) === 'true');
   const [chosen, setChosen] = useState<Sign | null>(null);
+  const [query, setQuery] = useState('');
   const [info, setInfo] = useState<{ char: string; html: string } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -53,11 +73,33 @@ export default function GlyphPicker({ onInsert, onDone }: Props) {
   }, []);
 
   const category = categories?.find((c) => c.id === categoryId) ?? categories?.[0];
-  const shown = useMemo(() => category?.signs.filter((s) => extended || !s.extended) ?? [], [category, extended]);
+  const search = query.trim();
+  // A search looks through every category; otherwise the chosen category is shown.
+  const { shown, hiddenExtended } = useMemo(() => {
+    if (!search) return { shown: category?.signs.filter((s) => extended || !s.extended) ?? [], hiddenExtended: 0 };
+    // MdC transliteration as the readings are written (nTr -> nṯr); q is also ḳ.
+    const reading = asciiToUnicode(search.replace(/q/g, 'K'));
+    const found: { sign: Sign; rank: number; order: number }[] = [];
+    let order = 0;
+    let hidden = 0;
+    for (const c of categories ?? []) {
+      for (const sign of c.signs) {
+        const rank = matchRank(sign, search, reading);
+        if (rank === null) continue;
+        if (sign.extended && !extended) {
+          hidden++;
+          continue;
+        }
+        found.push({ sign, rank, order: order++ });
+      }
+    }
+    found.sort((a, b) => a.rank - b.rank || a.order - b.order);
+    return { shown: found.slice(0, MAX_RESULTS).map((f) => f.sign), hiddenExtended: hidden };
+  }, [category, categories, extended, search]);
 
   useEffect(() => {
     gridRef.current?.scrollTo({ top: 0 });
-  }, [categoryId, extended]);
+  }, [categoryId, extended, search]);
 
   useEffect(() => {
     if (!chosen) return;
@@ -76,7 +118,9 @@ export default function GlyphPicker({ onInsert, onDone }: Props) {
       <div className="picker-head">
         <select className="form-select form-select-sm" aria-label="Sign category" value={category?.id ?? categoryId}
           disabled={!categories}
+          title={search ? 'Showing the search results from every category; choose a category to leave the search' : undefined}
           onChange={(e) => {
+            setQuery('');
             setCategoryId(e.target.value);
             store(CATEGORY_KEY, e.target.value);
             onDone();
@@ -96,9 +140,37 @@ export default function GlyphPicker({ onInsert, onDone }: Props) {
         </label>
       </div>
 
+      <div className="picker-search">
+        <i className="fa-solid fa-magnifying-glass" aria-hidden="true" />
+        <input type="search" className="form-control form-control-sm" placeholder="Find by MdC: w, nTr, G17…"
+          aria-label="Find signs by MdC code or transliteration" value={query} spellCheck={false}
+          autoCapitalize="off" autoCorrect="off" autoComplete="off"
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && shown.length) {
+              // Enter inserts the best match.
+              e.preventDefault();
+              setChosen(shown[0]);
+              onInsert(shown[0]);
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              if (query) setQuery('');
+              else onDone();
+            }
+          }} />
+      </div>
+
       <div ref={gridRef} className="picker-grid" role="listbox" aria-label="Signs">
         {error && <div className="picker-message text-danger">Could not load the signs: {error}</div>}
         {!error && !categories && <div className="picker-message text-muted"><i className="fa-solid fa-spinner fa-spin me-1" />Loading signs…</div>}
+        {search && categories && !shown.length && (
+          <div className="picker-message text-muted">No sign for “{search}”.</div>
+        )}
+        {search && hiddenExtended > 0 && (
+          <div className="picker-message text-muted">
+            {hiddenExtended} more among the extended signs (tick Extended).
+          </div>
+        )}
         {shown.map((s) => (
           <button key={s.char} type="button" role="option" aria-selected={chosen?.char === s.char}
             className={`picker-sign${chosen?.char === s.char ? ' chosen' : ''}`}

@@ -42,14 +42,21 @@ export interface DirectionState {
   disabled: boolean;
 }
 
-const EXPORTS: { format: ExportFormat; label: string; icon: string }[] = [
+/** `text`: an SVG with the signs as text and the fonts embedded, rather than as outlines. */
+const EXPORTS: { format: ExportFormat; label: string; icon: string; title?: string; text?: boolean }[] = [
   { format: 'gly', label: 'JSesh document (.gly)', icon: 'fa-solid fa-file-code' },
   { format: 'mdc', label: 'Manuel de Codage (.mdc)', icon: 'fa-solid fa-file-lines' },
   { format: 'res', label: 'RES (.res)', icon: 'fa-solid fa-file-lines' },
   { format: 'unicode', label: 'Unicode text (.txt)', icon: 'fa-solid fa-file-word' },
   { format: 'pdf', label: 'PDF', icon: 'fa-solid fa-file-pdf' },
-  { format: 'svg', label: 'SVG image', icon: 'fa-solid fa-file-image' },
+  { format: 'svg', label: 'SVG image', icon: 'fa-solid fa-file-image',
+    title: 'Signs as shapes: looks the same in every program (Illustrator, Word, Inkscape, browsers)' },
+  { format: 'svg', label: 'SVG image with text', icon: 'fa-solid fa-file-image', text: true,
+    title: 'Signs as text in the embedded NewGardiner font: selectable, but only programs that read embedded fonts (browsers) show them' },
 ];
+
+/** Sizes offered for the hieroglyphs in the PDF and when printing. */
+export const PDF_SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
 
 interface Props {
   mode: Mode;
@@ -80,7 +87,10 @@ interface Props {
   /** Opens a file through the browser's picker (only where CAN_OPEN_WITH_PICKER). */
   onOpenPicker: () => void;
   onOpenRecent: (entry: RecentFile) => void;
-  onExport: (format: ExportFormat) => void;
+  onExport: (format: ExportFormat, options?: { text?: boolean }) => void;
+  /** Size of the hieroglyphs in the PDF and when printing. */
+  pdfFontsize: number;
+  onPdfFontsize: (size: number) => void;
   onPrint: () => void;
   onSave: () => void;
 }
@@ -88,7 +98,7 @@ interface Props {
 export default function Toolbar({
   mode, fontsize, selectionCount, canUndo, canRedo, direction, hieroFont, hieroOptionsOpen, busy,
   onMode, onFontsize, onFontsizeStep, onClearSelection, onUndo, onRedo, onOrientation, onFlow, onHieroFont, onToggleHieroOptions,
-  onNew, onImport, onOpenPicker, onOpenRecent, onExport, onPrint, onSave,
+  onNew, onImport, onOpenPicker, onOpenRecent, onExport, pdfFontsize, onPdfFontsize, onPrint, onSave,
 }: Props) {
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -216,12 +226,23 @@ export default function Toolbar({
           {/* data-bs-popper activates Bootstrap's static positioning (normally set by its JS, which we don't load) */}
           <ul className={`dropdown-menu${exportOpen ? ' show' : ''}`} data-bs-popper="static">
             {EXPORTS.map((e) => (
-              <li key={e.format}>
-                <button type="button" className="dropdown-item" onClick={() => { setExportOpen(false); onExport(e.format); }}>
+              <li key={e.label}>
+                <button type="button" className="dropdown-item" title={e.title}
+                  onClick={() => { setExportOpen(false); onExport(e.format, { text: e.text }); }}>
                   <i className={`${e.icon} me-2 text-secondary`} />{e.label}
                 </button>
               </li>
             ))}
+            <li><hr className="dropdown-divider" /></li>
+            <li>
+              <label className="dropdown-item-text pdf-size" title="Size of the hieroglyphs in the PDF and when printing; lines with their own size are scaled along">
+                <span>PDF &amp; print size</span>
+                <select className="form-select form-select-sm" value={pdfFontsize}
+                  onChange={(e) => onPdfFontsize(Number(e.target.value))}>
+                  {PDF_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+            </li>
           </ul>
         </div>
         <button type="button" className="btn btn-sm btn-outline-secondary" onClick={onPrint} disabled={busy}

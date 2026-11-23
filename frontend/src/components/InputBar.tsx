@@ -8,6 +8,7 @@ interface Props {
   pending: boolean;
   onChange: (value: string) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  onPaste: (e: React.ClipboardEvent<HTMLInputElement>) => void;
   onCommit: () => void;
   /** Called when text in the input is highlighted (a non-empty selection). */
   onSelectText: () => void;
@@ -28,7 +29,7 @@ const PLACEHOLDERS: Record<Line['mode'], string> = {
 };
 
 const InputBar = forwardRef<HTMLInputElement, Props>(function InputBar(
-  { line, lineNumber, pending, onChange, onKeyDown, onCommit, onSelectText },
+  { line, lineNumber, pending, onChange, onKeyDown, onPaste, onCommit, onSelectText },
   ref,
 ) {
   const mode = MODES.find((m) => m.mode === line.mode)!;
@@ -49,6 +50,7 @@ const InputBar = forwardRef<HTMLInputElement, Props>(function InputBar(
           placeholder={PLACEHOLDERS[line.mode]}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           onSelect={(e) => {
             const el = e.currentTarget;
             if (el.selectionStart !== el.selectionEnd) onSelectText();

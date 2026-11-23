@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } fr
 import * as api from './api';
 import type { Sign } from './api';
 import AboutDialog from './components/AboutDialog';
-import DisplayBox from './components/DisplayBox';
+import DisplayBox, { EDIT_IN_PLACE, textOffsetAt } from './components/DisplayBox';
 import ImportDialog from './components/ImportDialog';
 import InputBar from './components/InputBar';
 import Notices, { type Notice } from './components/Notices';
@@ -29,6 +29,9 @@ import {
 
 const SIDEBAR_KEY = 'sebasesh.sidebarOpen';
 const PICKER_KEY = 'sebasesh.pickerOpen';
+const PDF_SIZE_KEY = 'sebasesh.pdfFontsize';
+/** Size of the hieroglyphs in the PDF and when printing, unless the user chose another. */
+const DEFAULT_PDF_FONTSIZE = 20;
 const HIERO_FONT_KEY = 'sebasesh.hieroFont';
 const HIERO_OPTIONS_KEY = 'sebasesh.hieroOptionsOpen';
 const DEFAULT_FONTSIZE = 48;
@@ -129,6 +132,35 @@ function lineText(l: Line): string {
   return l.mode === 'translit' ? asciiToUnicode(l.source) : l.source;
 }
 
+// Lines copied from the editor, kept with the text put on the clipboard, so that pasting that
+// text back (in this tab or another, in any document) restores the lines exactly: their kind,
+// MdC as typed, size and direction. The text alone (Unicode hieroglyphs, transliteration as
+// shown) loses all that. Kept in localStorage, so it is shared by the editor's tabs.
+const COPIED_KEY = 'sebasesh.copiedLines';
+
+type CopiedLine = StoredDocument['lines'][number];
+
+const sameClipboardText = (a: string, b: string) =>
+  a.replace(/\r\n?/g, '\n').trimEnd() === b.replace(/\r\n?/g, '\n').trimEnd();
+
+function rememberCopy(lines: Line[], text: string) {
+  try {
+    localStorage.setItem(COPIED_KEY, JSON.stringify({ text, lines: toStored(lines, 0).lines }));
+  } catch {
+    // pasting still works from the text
+  }
+}
+
+/** The lines copied from the editor, if `text` is what was put on the clipboard with them. */
+function recallCopy(text: string): CopiedLine[] | null {
+  try {
+    const kept = JSON.parse(localStorage.getItem(COPIED_KEY) ?? 'null') as { text: string; lines: CopiedLine[] } | null;
+    return kept && sameClipboardText(kept.text, text) ? kept.lines : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Copies lines as image + text (see clipboard.ts) and reports what was copied. */
 function copyLinesAsImage(lines: Line[], text: string, fontsize: number, notify: (n: Omit<Notice, 'id'>) => void) {
   const n = lines.length;
@@ -152,6 +184,28 @@ function download(blob: Blob, filename: string) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * The '-' to put before and after signs inserted between `before` and `after` in MdC: signs
+ * follow each other with '-', unless something that joins signs is already there.
+ */
+function separators(before: string, after: string): [string, string] {
+  return [before && !/[-:*&(\s]$/.test(before) ? '-' : '', after && !/^[-:*&)\s!]/.test(after) ? '-' : ''];
+}
+
+/**
+ * Whether a click on a hieroglyphic line is after its last sign: right of the signs (left of
+ * them for right-to-left lines), or below them for columns.
+ */
+function pastEndOfGlyphs(content: HTMLElement, line: Line, e: React.MouseEvent): boolean {
+  if (!line.renderedItems?.length) return false;
+  const glyphs = content.firstElementChild;
+  if (!glyphs) return false;
+  const r = glyphs.getBoundingClientRect();
+  const direction = line.direction ?? 'hlr';
+  if (direction.startsWith('v')) return e.clientY > r.bottom;
+  return direction === 'hrl' ? e.clientX < r.left : e.clientX > r.right;
 }
 
 export default function App() {
@@ -191,6 +245,13 @@ export default function App() {
   // Lines selected in the main window; font size changes apply to these (or to everything when empty).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(loadSidebarOpen);
+  const [pdfFontsize, setPdfFontsize] = useState(() => {
+    try {
+      return Number(localStorage.getItem(PDF_SIZE_KEY)) || DEFAULT_PDF_FONTSIZE;
+    } catch {
+      return DEFAULT_PDF_FONTSIZE;
+    }
+  });
   // The hieroglyph picker on the right: closed unless the user opened it.
   const [pickerOpen, setPickerOpen] = useState(() => {
     try {
@@ -211,6 +272,8 @@ export default function App() {
   });
 
   const inputRef = useRef<HTMLInputElement>(null);
+  // The current line's text in the main window, when it is Latin text edited in place.
+  const textEditorRef = useRef<HTMLTextAreaElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
   const centerRef = useRef<HTMLElement>(null); // the scrolling main window
   const history = useUndoHistory();
@@ -469,6 +532,7 @@ export default function App() {
       const text = selected.map(lineText).join('\n');
       e.clipboardData.setData('text/plain', text);
       e.preventDefault();
+      rememberCopy(selected, text);
       copyLinesAsImage(selected, text, fontsizeRef.current, notifyRef.current);
     };
     box.addEventListener('copy', onCopy);
@@ -480,9 +544,11 @@ export default function App() {
     const line = lines[index];
     const text = lineText(line);
     if (line.mode === 'hiero' && line.rendered) {
+      rememberCopy([line], text);
       copyLinesAsImage([line], text, fontsize, notify);
       return;
     }
+    rememberCopy([line], text);
     navigator.clipboard?.writeText(text)
       .then(() => notify({ kind: 'success', title: 'Copied line text' }))
       .catch(() => notify({ kind: 'danger', title: 'Could not copy to the clipboard' }));
@@ -541,10 +607,43 @@ export default function App() {
   // (this also replaces the input's native undo, which cannot follow React updates).
   const undoRedoRef = useRef({ undo, redo });
   undoRedoRef.current = { undo, redo };
+
+  /**
+   * Selects every line (⌘A), as a selection in the main window: font size and direction then
+   * apply to all lines, and ⌘C copies them all. Esc (or a click on a line) goes back to editing.
+   */
+  const selectAllLines = () => {
+    const box = displayRef.current;
+    if (!box) return;
+    setGlyphCursor(null);
+    (document.activeElement as HTMLElement | null)?.blur();
+    document.getSelection()?.selectAllChildren(box);
+    setSelectedIds(new Set(linesRef.current.map((l) => l.id)));
+  };
+  const selectAllRef = useRef(selectAllLines);
+  selectAllRef.current = selectAllLines;
+  const leaveSelectAllRef = useRef(() => undefined as void);
+  leaveSelectAllRef.current = () => {
+    clearSelection();
+    focusInput();
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // After ⌘A the focus is on the page: Esc returns to the current line.
+      if (e.key === 'Escape' && document.activeElement === document.body) {
+        leaveSelectAllRef.current();
+        return;
+      }
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const key = e.key.toLowerCase();
+      if (key === 'a' && !e.shiftKey) {
+        // Select all lines, except while typing a search or a sign name.
+        if ((e.target as HTMLElement | null)?.closest?.('.find-bar, .glyph-picker, .modal')) return;
+        e.preventDefault();
+        selectAllRef.current();
+        return;
+      }
       if (key === 'f' && !e.shiftKey) {
         // Search the document rather than the page.
         e.preventDefault();
@@ -626,11 +725,13 @@ export default function App() {
     if (dragged || e.shiftKey || e.detail > 1) {
       return; // selecting text (drag, shift-click, double/triple-click), not choosing a line to edit
     }
-    const id = lines[index].id;
+    const line = lines[index];
+    const id = line.id;
     if (e.metaKey || e.ctrlKey) {
-      // Cmd/Ctrl-click adds or removes a line from the selection.
+      // Cmd/Ctrl-click adds or removes a line from the selection (starting from the current line).
       setSelectedIds((prev) => {
         const next = new Set(prev);
+        if (next.size === 0 && index !== activeIndex) next.add(lines[activeIndex].id);
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
@@ -638,8 +739,26 @@ export default function App() {
       return;
     }
     clearSelection();
+    const content = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('.line-content');
+    let glyph: GlyphCursor | null = null;
+    let textCaret: number | null = null;
+    if (line.mode === 'hiero' && content && pastEndOfGlyphs(content, line, e)) {
+      // A click after the hieroglyphs puts the cursor after the last one.
+      glyph = { lineId: id, kind: 'caret', at: line.renderedItems?.length ?? 0 };
+    } else if (EDIT_IN_PLACE.has(line.mode) && content) {
+      // A click in Latin text puts the caret where it was clicked.
+      const text = content.querySelector<HTMLElement>('.text-line');
+      textCaret = text ? textOffsetAt(text, e.clientX, e.clientY) : null;
+    }
+    if (index === activeIndex) {
+      setGlyphCursor(glyph);
+      if (glyph) holdGlyphFocus();
+      else focusInput(textCaret ?? undefined);
+      return;
+    }
+    pendingGlyphCursor.current = glyph;
+    pendingTextCaret.current = textCaret;
     setActiveIndex(index);
-    focusInput();
   };
 
   // ------------------------------------------------------------ editing
@@ -656,7 +775,8 @@ export default function App() {
   };
 
   useLayoutEffect(() => {
-    const el = inputRef.current;
+    // A Latin line is edited where it is shown; other lines in the input bar.
+    const el = textEditorRef.current ?? inputRef.current;
     if (!el || pendingCaret.current === null) return;
     const caret = pendingCaret.current;
     pendingCaret.current = null;
@@ -666,11 +786,23 @@ export default function App() {
     el.setSelectionRange(pos, pos);
   }, [caretTick]);
 
+  // Set by a click that also chooses where to edit (see onLineClick).
+  const pendingGlyphCursor = useRef<GlyphCursor | null>(null);
+  const pendingTextCaret = useRef<number | null>(null);
+
   useEffect(() => {
-    setGlyphCursor(null);
+    const glyph = pendingGlyphCursor.current;
+    const text = pendingTextCaret.current;
+    pendingGlyphCursor.current = null;
+    pendingTextCaret.current = null;
+    setGlyphCursor(glyph);
+    if (glyph) {
+      holdGlyphFocus();
+      return;
+    }
     // Not while going through search results: typing continues in the search box.
     if (document.activeElement?.closest('.find-bar')) return;
-    focusInput();
+    focusInput(text ?? undefined);
   }, [activeIndex]);
 
   const setSource = (value: string, kind: EditKind = 'type') => {
@@ -729,8 +861,37 @@ export default function App() {
     setActiveIndex((a) => (a === index ? target : a === target ? index : a));
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  /** Moves lines (by id, in their order) to before line `at` (an index in the lines as they are). */
+  const moveLinesTo = (ids: string[], at: number) => {
+    const moving = new Set(ids);
+    const moved = lines.filter((l) => moving.has(l.id));
+    if (!moved.length) return;
+    const before = lines.slice(0, at).filter((l) => !moving.has(l.id)).length;
+    const rest = lines.filter((l) => !moving.has(l.id));
+    const next = [...rest.slice(0, before), ...moved, ...rest.slice(before)];
+    if (next.every((l, i) => l === lines[i])) return;
+    recordEdit('move');
+    setLines(next);
+    const activeId = lines[activeIndex].id;
+    setActiveIndex(next.findIndex((l) => l.id === activeId));
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
+    // In a wrapped Latin line edited in place, ↑/↓ move within its text until its first/last row.
+    const el = e.currentTarget;
+    if (el instanceof HTMLTextAreaElement && !e.shiftKey && el.selectionStart === el.selectionEnd
+      && ((e.key === 'ArrowUp' && el.selectionStart > 0) || (e.key === 'ArrowDown' && el.selectionStart < el.value.length))) {
+      const before = el.selectionStart;
+      requestAnimationFrame(() => {
+        // The caret did not move: it was on the first/last row, so go to the line before/after.
+        if (el.selectionStart === before && el.isConnected) {
+          const target = activeIndex + (e.key === 'ArrowUp' ? -1 : 1);
+          if (target >= 0 && target < linesRef.current.length) setActiveIndex(target);
+        }
+      });
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       newLineAfter(activeIndex);
@@ -887,10 +1048,14 @@ export default function App() {
     onImport(file, fromCopy ? undefined : entry.handle);
   };
 
-  const onExport = async (format: ExportFormat) => {
+  const onExport = async (format: ExportFormat, options: { text?: boolean } = {}) => {
     setBusy(true);
     try {
-      const result = await api.exportDocument(format, storedDocument(), stemOf(shownName));
+      const result = await api.exportDocument(format, storedDocument(), stemOf(shownName), {
+        // SVG: signs as outlines (shown the same everywhere) unless text was asked for.
+        outline: format === 'svg' && !options.text,
+        pdfFontsize: format === 'pdf' ? pdfFontsize : undefined,
+      });
       download(result.blob, result.filename);
       if (result.warnings.length > 0) {
         notify({ kind: 'warning', title: `Exported ${result.filename} with notes`, details: result.warnings });
@@ -909,7 +1074,7 @@ export default function App() {
     let warnings: string[] = [];
     try {
       const shown = await printPdf(async () => {
-        const result = await api.exportDocument('pdf', storedDocument(), stemOf(shownName));
+        const result = await api.exportDocument('pdf', storedDocument(), stemOf(shownName), { pdfFontsize });
         warnings = result.warnings;
         return result.blob;
       });
@@ -1014,7 +1179,15 @@ export default function App() {
     e.preventDefault();
     if (e.type === 'paste') {
       const text = e.clipboardData.getData('text/plain');
-      if (text.trim()) glyphEdit('paste', text);
+      if (!text.trim()) noTextToPaste(e.clipboardData.types);
+      else if (looksLikeJsesh(text, true)) {
+        // One line pastes at the glyph cursor; more are added as lines.
+        const copied = recallCopy(text);
+        const single = copied ? copied.length === 1 && copied[0].mode === 'hiero'
+          : !/[\r\n]/.test(text.trim()) && !/(^|-)\+[stlbi]|^\+\+/m.test(text);
+        if (single) glyphEdit('paste', copied ? copied[0].source : text.trim().replace(/-?!+$/, ''));
+        else pasteMdcBlock(text, null);
+      } else glyphEdit('paste', text);
     } else {
       writeClipboardLater(glyphEdit(e.type === 'cut' ? 'cut' : 'copy'));
     }
@@ -1051,11 +1224,58 @@ export default function App() {
       const pos = c.kind === 'caret' ? c.at + forward
         : forward > 0 ? Math.max(c.anchor, c.head) + 1 : Math.min(c.anchor, c.head);
       setGlyphCursor({ lineId: c.lineId, kind: 'caret', at: Math.max(0, Math.min(count, pos)) });
-    } else if (!(e.metaKey || e.ctrlKey) && e.key.length === 1) {
-      // Typing goes back to the input bar.
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      // Along a row, ↑/↓ go to the line before/after, as in the input bar.
+      e.preventDefault();
+      const target = activeIndex + (e.key === 'ArrowUp' ? -1 : 1);
+      if (target < 0 || target >= lines.length) return;
       setGlyphCursor(null);
-      focusInput();
+      setActiveIndex(target);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      setGlyphCursor(null);
+      newLineAfter(activeIndex);
+    } else if (!(e.metaKey || e.ctrlKey || e.altKey) && e.key.length === 1) {
+      // Typing goes into the line's text where the glyph cursor is, and on in the input bar.
+      e.preventDefault();
+      typeAtGlyphCursor(e.key);
     }
+  };
+
+  // Keys typed while the place to type them is being looked up (they go in together).
+  const typedAhead = useRef<string | null>(null);
+
+  /** Types `key` into the current line's MdC where the glyph cursor is (after a selection). */
+  const typeAtGlyphCursor = async (key: string) => {
+    if (typedAhead.current !== null) {
+      typedAhead.current += key;
+      return;
+    }
+    const c = glyphCursorRef.current;
+    const line = c && linesRef.current.find((l) => l.id === c.lineId);
+    if (!c || !line) return;
+    const at = c.kind === 'caret' ? c.at : Math.max(c.anchor, c.head) + 1;
+    typedAhead.current = key;
+    let offset = -1;
+    try {
+      offset = (await api.editLine(line.source, 'locate', at)).offset;
+    } catch {
+      // typed at the end instead
+    }
+    const typed = typedAhead.current ?? key;
+    typedAhead.current = null;
+    const current = linesRef.current.find((l) => l.id === line.id);
+    if (!current || current.source !== line.source) return;
+    if (offset < 0) offset = at === 0 ? 0 : line.source.trimEnd().replace(/-?!+$/, '').length;
+    const value = line.source;
+    const [pre, post] = typed === ' ' ? ['', ''] : separators(value.slice(0, offset), value.slice(offset));
+    const source = value.slice(0, offset) + pre + typed + post + value.slice(offset);
+    setGlyphCursor(null);
+    recordEdit('type', line.id);
+    clearSelection();
+    setLines((ls) => ls.map((l) => (l.id === line.id ? { ...l, source } : l)));
+    renderOne(line.id, source);
+    focusInput(offset + pre.length + typed.length);
   };
 
   // ------------------------------------------------------------ hieroglyph picker
@@ -1088,15 +1308,97 @@ export default function App() {
       return;
     }
     const el = inputRef.current;
-    const value = active.source;
-    const start = el?.selectionStart ?? value.length;
-    const end = el?.selectionEnd ?? value.length;
-    const before = value.slice(0, start);
-    const after = value.slice(end);
-    // Signs follow each other with '-', unless something that joins signs is already there.
-    const text = (before && !/[-:*&(\s]$/.test(before) ? '-' : '') + code
-      + (after && !/^[-:*&)\s!]/.test(after) ? '-' : '');
-    insertAtCaret(text);
+    insertSigns(code, el?.selectionStart ?? active.source.length, el?.selectionEnd ?? active.source.length);
+  };
+
+  /** Puts MdC in the current hieroglyphic line in place of [start, end), with '-' where needed. */
+  const insertSigns = (code: string, start: number, end: number, lineId = active.id) => {
+    const line = linesRef.current.find((l) => l.id === lineId);
+    if (!line) return;
+    const value = line.source;
+    const [pre, post] = separators(value.slice(0, start), value.slice(end));
+    const source = value.slice(0, start) + pre + code + post + value.slice(end);
+    if (line.id === active.id) {
+      setSource(source, 'insert');
+    } else {
+      recordEdit('insert', line.id);
+      setLines((ls) => ls.map((l) => (l.id === line.id ? { ...l, source } : l)));
+      renderOne(line.id, source);
+    }
+    focusInput(start + pre.length + code.length);
+  };
+
+  // ------------------------------------------------------------ pasting (JSesh)
+
+  /**
+   * Pastes MdC copied from JSesh (or any MdC text): text of one hieroglyphic line goes in at the
+   * caret; several lines (or text lines, +s...) are read like a .gly file and added after the
+   * current line. Resolves to whether the text was taken.
+   */
+  const pasteMdcBlock = async (text: string, caret: { start: number; end: number } | null) => {
+    try {
+      const copied = recallCopy(text);
+      // Lines copied from the editor come back as they were; other text is read as a file:
+      // Unicode if it has hieroglyphs in it (as copied from here or elsewhere), else MdC (JSesh).
+      const unicode = /[\u{13000}-\u{143FF}]/u.test(text);
+      const result = copied ? { lines: copied, warnings: [] as string[] }
+        : await api.importFile(new File([text], unicode ? 'clipboard.txt' : 'clipboard.gly'), unicode ? 'unicode' : 'mdc');
+      const imported = result.lines;
+      // Read text ends with blank lines that were only its line breaks (lines copied here are kept as they were).
+      while (!copied && imported.length > 1 && !imported[imported.length - 1].source.trim()) imported.pop();
+      if (!imported.length) return;
+      const current = linesRef.current[activeIndexRef.current];
+      if (imported.length === 1 && imported[0].mode === 'hiero' && current.mode === 'hiero' && caret) {
+        insertSigns(imported[0].source, caret.start, caret.end, current.id);
+        return;
+      }
+      const added = imported.map((l) => makeLine(l.mode, l.source,
+        (l as CopiedLine).fontsize ?? current.fontsize, l.direction ?? current.direction));
+      const index = linesRef.current.indexOf(current);
+      const replace = !current.source.trim();
+      recordEdit('insert');
+      setLines((ls) => [...ls.slice(0, replace ? index : index + 1), ...added, ...ls.slice(index + 1)]);
+      setActiveIndex((replace ? index : index + 1) + added.length - 1);
+      renderMany(added);
+      notify({ kind: 'success', title: `Pasted ${added.length} line${added.length === 1 ? '' : 's'}`,
+        details: result.warnings.length ? result.warnings.slice(0, 5) : undefined });
+    } catch (err) {
+      notify({ kind: 'danger', title: 'Could not paste', details: [(err as Error).message] });
+    }
+  };
+
+  /** Whether pasted text is MdC to read line by line: JSesh line ends (-!), text lines (+s), or several lines. */
+  const looksLikeJsesh = (text: string, intoHiero: boolean) => {
+    const t = text.trim();
+    // Copied here: lines to restore, unless it is one text line (then it is just text).
+    const copied = recallCopy(text);
+    if (copied) return copied.length > 1 || copied[0]?.mode === 'hiero';
+    // Several lines with hieroglyphs: lines to add, whatever line is being edited.
+    if (/[\r\n]/.test(t) && /[\u{13000}-\u{143FF}]/u.test(t)) return true;
+    if (/(^|-)\+[stlbi]|^\+\+/m.test(t)) return true;
+    return intoHiero && (/[\r\n]/.test(t) || /(^|-)!$/.test(t));
+  };
+
+  /** The clipboard had no text (JSesh copies only pictures unless told to copy text too). */
+  const noTextToPaste = (types: readonly string[]) => {
+    if (!types.length) return;
+    notify({ kind: 'warning', title: 'Nothing to paste as text: the clipboard holds a picture',
+      details: ['To paste from JSesh, have it copy text too: in JSesh\'s Preferences, among the clipboard formats, tick “plain text”, then copy again.'] });
+  };
+
+  /** Paste into the input bar or a Latin line edited in place. */
+  const onTextPaste = (e: React.ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) {
+      if (!e.clipboardData.types.length || e.clipboardData.types.includes('text/plain')) return;
+      e.preventDefault();
+      noTextToPaste(e.clipboardData.types);
+      return;
+    }
+    if (!looksLikeJsesh(text, active.mode === 'hiero')) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    pasteMdcBlock(text, { start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length });
   };
 
   /** Gives the focus back to where it was before using the picker's category list. */
@@ -1223,6 +1525,15 @@ export default function App() {
         onNew={onNew}
         onImport={onImport}
         onExport={onExport}
+        pdfFontsize={pdfFontsize}
+        onPdfFontsize={(size) => {
+          setPdfFontsize(size);
+          try {
+            localStorage.setItem(PDF_SIZE_KEY, String(size));
+          } catch {
+            // not essential
+          }
+        }}
         onPrint={onPrint}
         onSave={() => onSave(false)}
         onOpenPicker={onOpenPicker}
@@ -1259,6 +1570,11 @@ export default function App() {
               onItemDown={onItemDown}
               onItemEnter={onItemEnter}
               onGapDown={onGapDown}
+              onReorder={moveLinesTo}
+              textEditorRef={textEditorRef}
+              onTextChange={setSource}
+              onTextKeyDown={onKeyDown}
+              onTextPaste={onTextPaste}
             />
             <textarea ref={glyphClipboard} className="glyph-clipboard" aria-hidden="true" tabIndex={-1}
               onCopy={onGlyphClipboard} onCut={onGlyphClipboard} onPaste={onGlyphClipboard} onKeyDown={onGlyphKey}
@@ -1299,6 +1615,7 @@ export default function App() {
         onSelectText={() => setSelectedIds((prev) =>
           prev.size === 1 && prev.has(active.id) ? prev : new Set([active.id]))}
         onCommit={() => newLineAfter(activeIndex)}
+        onPaste={onTextPaste}
       />
 
       <Notices notices={notices} onDismiss={(id) => setNotices((ns) => ns.filter((n) => n.id !== id))} />

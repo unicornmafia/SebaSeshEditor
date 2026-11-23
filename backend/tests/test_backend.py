@@ -407,7 +407,7 @@ def test_pdf_svg_directions(direction):
     pdf, warnings = export_pdf(doc)
     assert pdf.startswith(b'%PDF') and not warnings
     svg, _ = export_svg(doc, embed_fonts=False)
-    assert svg.count('<svg') == 2
+    assert svg.count('<svg') == 1 and svg.count('<g transform="translate(') == 1
 
 
 @pytest.mark.parametrize('direction', ['hlr', 'hrl', 'vlr'])
@@ -563,3 +563,58 @@ def test_sign_info_keeps_only_list_tags():
     from app.signs import _clean_info
     assert _clean_info('<ul><li><b>Det.</b> <i>s</i> <script>x</script></li></ul>') == \
         '<ul><li><b>Det.</b> <i>s</i> &lt;script&gt;x&lt;/script&gt;</li></ul>'
+
+
+def test_svg_export_places_every_sign_absolutely():
+    from app.render import export_svg
+    doc = Document(lines=[Line(source='i-w-r:a-nfr'), Line(source='A1\\R90-<-ra-mn->', direction='hrl'),
+                          Line(mode='latin', source='x')])
+    svg, _ = export_svg(doc, embed_fonts=False)
+    assert 'dx=' not in svg and 'dy=' not in svg and '<tspan' not in svg
+    assert '<rect' not in svg and svg.count('<svg') == 1  # no background, no nested drawings
+    assert 'opacity: 0' not in svg  # the hidden copy text is gone
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(svg)
+    signs = [t for t in root.iter('{http://www.w3.org/2000/svg}text') if t.text and ord(t.text[0]) > 0x13000]
+    # r above a: same column, different heights; i and w side by side.
+    pos = {t.text: (float(t.get('x')), float(t.get('y'))) for t in signs}
+    r, a = pos['\U0001308B'], pos['\U0001309D']
+    assert abs(r[0] - a[0]) < 5 and r[1] < a[1]
+    assert pos['\U000131CB'][0] < pos['\U00013171'][0]
+    # Right to left: the first group is drawn rightmost (hieropy mirrors the row).
+    from app.render import _flatten_hieropy_svg
+    flat = ET.fromstring(_flatten_hieropy_svg(hiero.render_svg(hiero.interpret('A1-B1').fragment, 48, direction='hrl')[0]))
+    a1, b1 = [t for t in flat.iter('{http://www.w3.org/2000/svg}text')]
+    assert a1.get('transform') == 'scale(-1,1)' and -float(a1.get('x')) > -float(b1.get('x'))
+    outlined, _ = export_svg(doc, outline=True)
+    assert '<text' not in outlined.replace('<text x="', '') or 'NewGardiner' not in outlined
+
+
+def test_pdf_fontsize_scales_lines(monkeypatch):
+    from app import render
+    sizes = []
+    original = render._hiero_line
+    monkeypatch.setattr(render, '_hiero_line', lambda source, fontsize, *a, **k: (sizes.append(fontsize), original(source, fontsize, *a, **k))[1])
+    doc = Document(fontsize=48, lines=[Line(source='A1'), Line(source='B1', fontsize=96)])
+    render.export_pdf(doc, 20)
+    assert sizes == [20, 40]
+    r = client.post('/api/export', json={'format': 'pdf', 'pdf_fontsize': 20, 'document': doc.model_dump()})
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize('source, at, offset', [
+    ('i-w-r:a', 0, 0), ('i-w-r:a', 1, 2), ('i-w-r:a', 3, 7), ('i-w-r:a-!', 3, 7),
+    ('|B1-i-w', 1, 4), ('', 0, 0), ('  i-w', 2, 5),
+    ('\U000131CB\U00013171', 1, 1), ('\U000131CB\U00013171', 2, 2),
+])
+def test_locate_typing_position(source, at, offset):
+    from app.editing import edit
+    r = edit(source, 'locate', at)
+    assert r.ok and r.offset == offset
+
+
+def test_mdc_that_crashes_hieropy_is_an_error_not_a_crash():
+    interp = hiero.interpret('iw Hr=f (r=f??) Dr ms.tw?=f')
+    assert not interp.ok and 'Cannot parse' in interp.error
+    r = client.post('/api/import', files={'file': ('x.gly', 'A1-!\n(r=f??)-!\n')}, data={'format': 'mdc'})
+    assert r.status_code == 200
