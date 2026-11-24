@@ -15,6 +15,10 @@ interface Props {
   onMove: (index: number, delta: number) => void;
   onDelete: (index: number) => void;
   onCopy: (index: number) => void;
+  /** SebaShem: a hieroglyphic line's transliteration, or a transliteration line's translation, as a new line below. */
+  onMachine: (index: number) => void;
+  /** Lines waiting for SebaShem. */
+  machineBusy: Set<string>;
   /** Lines matching the search, and the text to mark in text lines. */
   matchIds?: Set<string>;
   highlight?: string;
@@ -57,7 +61,7 @@ export const TEXT_SCALE = 0.5;
 
 /** The main window. Lines carry data-line-id so a text selection can be mapped back to lines. */
 const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
-  { lines, activeIndex, selectedIds, fontsize, hieroFont, onLineClick, onMove, onDelete, onCopy, matchIds, highlight = '',
+  { lines, activeIndex, selectedIds, fontsize, hieroFont, onLineClick, onMove, onDelete, onCopy, onMachine, machineBusy, matchIds, highlight = '',
     glyphCursor, onItemDown, onItemEnter, onGapDown, onReorder, textEditorRef, onTextChange, onTextKeyDown, onTextPaste },
   ref,
 ) {
@@ -193,6 +197,18 @@ const DisplayBox = forwardRef<HTMLDivElement, Props>(function DisplayBox(
                 aria-label="Copy line" disabled={!line.source.trim()}>
                 <i className="fa-regular fa-copy" />
               </button>
+              {(line.mode === 'hiero' || line.mode === 'translit') && (
+                <button type="button" className="btn btn-sm btn-link machine-button" onClick={() => onMachine(i)}
+                  title={line.mode === 'hiero'
+                    ? 'Transliterate with SebaShem (adds the transliteration below)'
+                    : 'Translate with SebaShem (adds the translation below)'}
+                  aria-label={line.mode === 'hiero' ? 'Transliterate line' : 'Translate line'}
+                  disabled={!line.source.trim() || machineBusy.has(line.id)}>
+                  {machineBusy.has(line.id) ? <i className="fa-solid fa-spinner fa-spin" />
+                    : line.mode === 'hiero' ? <span className="machine-glyph">{'\u1E6F'}</span>
+                    : <i className="fa-solid fa-language" />}
+                </button>
+              )}
               <button type="button" className="btn btn-sm btn-link" title="Move up" disabled={i === 0} onClick={() => onMove(i, -1)}>
                 <i className="fa-solid fa-arrow-up" />
               </button>

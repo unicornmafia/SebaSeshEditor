@@ -618,3 +618,66 @@ def test_mdc_that_crashes_hieropy_is_an_error_not_a_crash():
     assert not interp.ok and 'Cannot parse' in interp.error
     r = client.post('/api/import', files={'file': ('x.gly', 'A1-!\n(r=f??)-!\n')}, data={'format': 'mdc'})
     assert r.status_code == 200
+
+
+# ---------------------------------------------------------------- SebaShem
+
+@pytest.fixture
+def fake_sebashem(monkeypatch):
+    """A stand-in SebaShem that records what it is sent and answers like the real one."""
+    import http.server
+    import threading
+
+    sent: list[tuple[str, str]] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            sent.append((self.path, body['text']))
+            if self.path == '/v1/transliterate':
+                segs = [{'transliteration': 'Dd .n .f', 'marked': None},
+                        {'transliteration': 'iry pa.t', 'marked': {'transliteration': '|R12 iry pa.t'}}]
+            else:
+                segs = [{'translation': 'he said', 'marked': {'translation': '|R12 he said'}}]
+            data = json.dumps({'segments': segs}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv('SEBASHEM_URL', f'http://127.0.0.1:{server.server_port}')
+    yield sent
+    server.shutdown()
+
+
+def test_transliterate_line_through_sebashem(fake_sebashem):
+    r = client.post('/api/transliterate', json={'text': '𓂋𓊪|R12-D21'})
+    assert r.status_code == 200, r.text
+    # Segments joined, references kept, suffixes attached.
+    assert r.json()['text'] == 'Dd.n.f |R12 iry pa.t'
+    path, mdc = fake_sebashem[0]
+    assert path == '/v1/transliterate' and '|R12' in mdc and '𓂋' not in mdc
+
+
+def test_translate_line_through_sebashem(fake_sebashem):
+    r = client.post('/api/translate', json={'text': '|R12 Dd.n=f'})
+    assert r.status_code == 200, r.text
+    assert r.json()['text'] == '|R12 He said'
+    assert fake_sebashem == [('/v1/translate', '|R12 Dd.n=f')]
+
+
+def test_sebashem_unreachable(monkeypatch):
+    monkeypatch.setenv('SEBASHEM_URL', 'http://127.0.0.1:9')
+    r = client.post('/api/translate', json={'text': 'Dd.n=f'})
+    assert r.status_code == 503 and 'not reachable' in r.json()['detail']
+
+
+def test_transliterate_needs_hieroglyphs(fake_sebashem):
+    assert client.post('/api/transliterate', json={'text': '|R12'}).status_code == 422
+    assert not fake_sebashem

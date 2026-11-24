@@ -841,6 +841,48 @@ export default function App() {
     setActiveIndex(index + 1);
   };
 
+  // ------------------------------------------------------------ SebaShem
+
+  const [machineBusy, setMachineBusy] = useState<Set<string>>(() => new Set());
+  /** Puts SebaShem's result in a new line below line `id` (wherever it is by now). */
+  const addMachineLine = (id: string, mode: Mode, text: string) => {
+    const index = lines.findIndex((l) => l.id === id);
+    if (index < 0) return;
+    recordEdit('newline');
+    const line = makeLine(mode, text);
+    setLines((ls) => {
+      const at = ls.findIndex((l) => l.id === id);
+      return [...ls.slice(0, at + 1), line, ...ls.slice(at + 1)];
+    });
+    setActiveIndex((a) => (a > index ? a + 1 : a));
+  };
+  // The request finishes after later renders: use the latest state then.
+  const addMachineLineRef = useRef(addMachineLine);
+  addMachineLineRef.current = addMachineLine;
+
+  /** A hieroglyphic line's transliteration, or a transliteration line's translation, by SebaShem. */
+  const machineLine = (index: number) => {
+    const line = lines[index];
+    if (!line?.source.trim() || machineBusy.has(line.id)) return;
+    const transliterate = line.mode === 'hiero';
+    if (!transliterate && line.mode !== 'translit') return;
+    const busy = (on: boolean) => setMachineBusy((b) => {
+      const next = new Set(b);
+      if (on) next.add(line.id);
+      else next.delete(line.id);
+      return next;
+    });
+    busy(true);
+    api.machineLine(transliterate ? 'transliterate' : 'translate', line.source)
+      .then((text) => addMachineLineRef.current(line.id, transliterate ? 'translit' : 'latin', text))
+      .catch((err) => notify({
+        kind: 'danger',
+        title: transliterate ? 'Could not transliterate the line' : 'Could not translate the line',
+        details: [(err as Error).message],
+      }))
+      .finally(() => busy(false));
+  };
+
   const deleteLine = (index: number) => {
     if (lines.length <= 1) return;
     recordEdit('delete');
@@ -1564,6 +1606,8 @@ export default function App() {
               onMove={moveLine}
               onDelete={deleteLine}
               onCopy={copyLine}
+              onMachine={machineLine}
+              machineBusy={machineBusy}
               matchIds={matchIds}
               highlight={findOpen && findScope !== 'hiero' ? findQuery.text : ''}
               glyphCursor={glyphCursor}

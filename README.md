@@ -107,6 +107,16 @@ groups. As in MdC, signs must be separated: `B1-nfr`, not `B1nfr`.
 Anything a target format can't express (for example, MdC has no middle insertion) is approximated, and
 listed in a notice after export. Lines that can't be rendered are skipped and reported the same way.
 
+### Machine transliteration and translation (SebaShem)
+
+Hieroglyphic lines have a ṯ button among their line buttons: it sends the line to
+[SebaShem](../SebaShem) and puts the transliteration it returns in a new line directly below.
+Transliteration lines have a translate button that does the same with the English translation.
+Line references (`|R12`) are kept in place. The editor's server calls SebaShem (the browser never
+does), at `SEBASHEM_URL`: by default `http://localhost:8000`, and in `docker-compose.yml`
+`http://host.docker.internal:8000`, a SebaShem running on the host (`docker compose up` in
+`../SebaShem`). When SebaShem isn't running, the buttons show a notice saying so.
+
 ## Development
 
 ```bash

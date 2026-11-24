@@ -6,4 +6,7 @@ services:
       target: runtime
     ports:
       - "8090:8000"
+    environment:
+      # SebaShem (machine transliteration and translation), here running on the host.
+      SEBASHEM_URL: ${SEBASHEM_URL:-http://host.docker.internal:8000}
     restart: unless-stopped

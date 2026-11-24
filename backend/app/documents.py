@@ -83,7 +83,7 @@ def text_of(line: Line) -> str:
 
 # ---------------------------------------------------------------- export
 
-def _line_to_mdc(line: Line, warnings: list[str], index: int) -> str | None:
+def line_to_mdc(line: Line, warnings: list[str], index: int) -> str | None:
     if line.mode != 'hiero':
         text = line.source.replace('\\', '\\\\').replace('+', '\\+')
         return f'+{MODE_TO_JSESH[line.mode]}{text}+s'
@@ -137,7 +137,7 @@ def export_mdc(doc: Document, jsesh_header: bool) -> tuple[str, list[str]]:
     elif differing := _non_default_directions(doc):
         warnings.append(f'MdC has no writing direction; line(s) {_line_list(differing)} are not horizontal left-to-right')
     for i, line in enumerate(doc.lines, 1):
-        mdc = _line_to_mdc(line, warnings, i)
+        mdc = line_to_mdc(line, warnings, i)
         if mdc is not None:
             out.append(f'{mdc}-!\n')
     return ''.join(out), warnings

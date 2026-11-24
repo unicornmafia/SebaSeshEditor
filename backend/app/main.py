@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import documents, editing, hiero, render, signs
+from . import documents, editing, hiero, render, sebashem, signs
 from .documents import Document, Line
 
 app = FastAPI(title='SebaSesh')
@@ -123,6 +123,45 @@ def sign_info(char: str):
     if len(char) != 1:
         raise HTTPException(400, 'One sign expected')
     return {'info': signs.sign_info(char)}
+
+
+class MachineRequest(BaseModel):
+    # transliterate: a hieroglyphic line's source (MdC or Unicode); translate: a transliteration
+    # line's source (MdC ASCII).
+    text: str = Field(min_length=1, max_length=10_000)
+
+
+class MachineResponse(BaseModel):
+    text: str
+    warnings: list[str] = []
+
+
+def _sebashem(call, text: str) -> str:
+    try:
+        result = call(text)
+    except sebashem.SebaShemError as err:
+        raise HTTPException(err.status, str(err)) from None
+    if not result:
+        raise HTTPException(422, 'SebaShem returned nothing for this line')
+    return result
+
+
+@app.post('/api/transliterate', response_model=MachineResponse)
+def machine_transliterate(req: MachineRequest):
+    """A hieroglyphic line's transliteration by SebaShem (as MdC ASCII, like a transliteration line)."""
+    warnings: list[str] = []
+    mdc = documents.line_to_mdc(Line(mode='hiero', source=req.text), warnings, 1)
+    if not mdc or not hiero.interpret(req.text).unicode.strip():
+        raise HTTPException(422, 'This line has no hieroglyphs to transliterate')
+    return MachineResponse(text=_sebashem(sebashem.transliterate, mdc), warnings=warnings)
+
+
+@app.post('/api/translate', response_model=MachineResponse)
+def machine_translate(req: MachineRequest):
+    """A transliteration line's English translation by SebaShem."""
+    if not req.text.strip():
+        raise HTTPException(422, 'This line has no transliteration to translate')
+    return MachineResponse(text=_sebashem(sebashem.translate, req.text))
 
 
 @app.get('/api/health')

@@ -120,3 +120,27 @@ export async function fetchSignInfo(char: string, signal?: AbortSignal): Promise
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return ((await res.json()) as { info: string }).info;
 }
+
+/**
+ * Machine transliteration of a hieroglyphic line, or translation of a transliteration line,
+ * by SebaShem (through the server). Resolves to the new line's text (MdC ASCII for a
+ * transliteration); rejects with the server's explanation.
+ */
+export async function machineLine(task: 'transliterate' | 'translate', text: string): Promise<string> {
+  const res = await fetch(`/api/${task}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (typeof body.detail === 'string') detail = body.detail;
+    } catch {
+      // not JSON
+    }
+    throw new Error(detail);
+  }
+  return ((await res.json()) as { text: string }).text;
+}

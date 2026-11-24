@@ -588,6 +588,17 @@ body {
   color: #6c8aa8;
   padding: 2px 6px;
 }
+/* SebaShem's button stays in view while the line waits for it. */
+.line-actions:has(.fa-spinner) {
+  visibility: visible;
+}
+.machine-glyph {
+  font-family: 'Times New Roman', serif;
+  font-weight: 700;
+  display: inline-block;
+  min-width: 1em;
+  line-height: 1;
+}
 
 /* ------------------------------------------------------------ input bar */
 
